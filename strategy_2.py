@@ -25,8 +25,6 @@ from typing import Dict, List, Tuple, Any
 import warnings
 warnings.filterwarnings('ignore')
 
-
-
 # Import all functions from the function module
 import function_module as fm
 
@@ -198,7 +196,13 @@ print(f"   • processed_data: Same as dataFrames (alias)")
 fm.explore_data(dataFrames, regions_dict)
 
 #%%
-
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Tuple, Any
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy import stats
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 class CountryFactorSelectionFramework:
     """
@@ -343,24 +347,35 @@ class CountryFactorSelectionFramework:
         print("Creating country-factor matrix...")
         print(f"Processing {len(dataFrames)} metrics...")
         
+        if not dataFrames:
+            raise ValueError("No metrics provided in dataFrames dictionary")
+        
         # Step 1: Stack all DataFrames to create long-format data
         factor_panels = {}
         
         for metric_name, metric_df in dataFrames.items():
             if isinstance(metric_df, pd.DataFrame) and not metric_df.empty:
+                print(f"  Processing {metric_name}: shape {metric_df.shape}")
+                
                 # Stack the DataFrame: (date, country) -> value
-                stacked = metric_df.stack()
-                stacked.name = metric_name
-                
-                # Check data coverage
-                total_possible = len(metric_df.index) * len(metric_df.columns)
-                coverage = stacked.notna().sum() / total_possible
-                
-                if coverage >= self.min_data_coverage:
-                    factor_panels[metric_name] = stacked
-                    print(f"  ✓ {metric_name}: {coverage:.1%} coverage")
-                else:
-                    print(f"  ✗ {metric_name}: {coverage:.1%} coverage (below threshold)")
+                try:
+                    stacked = metric_df.stack()
+                    stacked.name = metric_name
+                    
+                    # Check data coverage
+                    total_possible = len(metric_df.index) * len(metric_df.columns)
+                    coverage = stacked.notna().sum() / total_possible if total_possible > 0 else 0
+                    
+                    if coverage >= self.min_data_coverage:
+                        factor_panels[metric_name] = stacked
+                        print(f"    ✓ {metric_name}: {coverage:.1%} coverage, {stacked.notna().sum()} valid observations")
+                    else:
+                        print(f"    ✗ {metric_name}: {coverage:.1%} coverage (below {self.min_data_coverage:.1%} threshold)")
+                        
+                except Exception as e:
+                    print(f"    ✗ Error processing {metric_name}: {e}")
+            else:
+                print(f"  ✗ Skipping {metric_name}: empty or invalid DataFrame")
         
         # Step 2: Combine all factors into single DataFrame
         print(f"\nCombining {len(factor_panels)} qualifying metrics...")
@@ -370,6 +385,9 @@ class CountryFactorSelectionFramework:
         
         # Create multi-index DataFrame
         combined_data = pd.DataFrame(factor_panels)
+        print(f"Combined data shape: {combined_data.shape}")
+        print(f"Index levels: {combined_data.index.names}")
+        print(f"Sample index values: {combined_data.index[:5].tolist()}")
         
         # Step 3: Cross-sectional standardization at each date
         print("Performing cross-sectional standardization...")
@@ -485,13 +503,9 @@ class CountryFactorSelectionFramework:
         """
         print("Computing factor correlation matrix...")
         
-        # Remove any remaining NaN values
-        clean_data = factor_matrix.dropna()
-        print(f"  Using {len(clean_data)} complete observations")
-        
         if factor_matrix.empty:
-           print("WARNING: Factor matrix is empty, returning empty correlation matrix")
-           return pd.DataFrame()
+            print("WARNING: Factor matrix is empty, returning empty correlation matrix")
+            return pd.DataFrame()
         
         # Remove any remaining NaN values
         clean_data = factor_matrix.dropna()
@@ -563,6 +577,10 @@ class CountryFactorSelectionFramework:
         List[str] : Selected representative factors
         """
         print("Applying hierarchical clustering for factor selection...")
+        
+        if correlation_matrix.empty:
+            print("WARNING: Correlation matrix is empty, returning empty factor list")
+            return []
         
         # Convert correlation to distance
         distance_matrix = 1 - np.abs(correlation_matrix.fillna(0))
@@ -689,6 +707,10 @@ class CountryFactorSelectionFramework:
         """
         print("Performing VIF analysis...")
         
+        if not candidate_factors:
+            print("  No candidate factors provided")
+            return []
+        
         try:
             from statsmodels.stats.outliers_influence import variance_inflation_factor
         except ImportError:
@@ -696,13 +718,18 @@ class CountryFactorSelectionFramework:
             return candidate_factors
         
         # Prepare clean data
-        vif_data = factor_matrix[candidate_factors].dropna()
-        
-        if len(vif_data) < len(candidate_factors) * 5:
-            print("  ⚠️  Insufficient data for VIF analysis")
+        available_factors = [f for f in candidate_factors if f in factor_matrix.columns]
+        if not available_factors:
+            print("  ⚠️  No candidate factors found in factor matrix")
             return candidate_factors
+            
+        vif_data = factor_matrix[available_factors].dropna()
         
-        remaining_factors = candidate_factors.copy()
+        if len(vif_data) < len(available_factors) * 5:
+            print("  ⚠️  Insufficient data for VIF analysis")
+            return available_factors
+        
+        remaining_factors = available_factors.copy()
         vif_results = []
         iteration = 1
         
@@ -742,7 +769,7 @@ class CountryFactorSelectionFramework:
                 break
         
         self.results['vif_analysis'] = vif_results
-        print(f"✓ VIF analysis: {len(candidate_factors)} → {len(remaining_factors)} factors")
+        print(f"✓ VIF analysis: {len(available_factors)} → {len(remaining_factors)} factors")
         
         return remaining_factors
     
@@ -766,6 +793,10 @@ class CountryFactorSelectionFramework:
         List[str] : Category-balanced factors
         """
         print("Balancing factors across categories...")
+        
+        if not selected_factors:
+            print("  No factors to balance")
+            return []
         
         # Group by category
         category_groups = {}
@@ -826,8 +857,36 @@ class CountryFactorSelectionFramework:
         # Step 2: Create and standardize country-factor matrix
         factor_matrix = self.create_country_factor_matrix(dataFrames)
         
+        if factor_matrix.empty:
+            print("ERROR: Factor matrix is empty - cannot proceed with analysis")
+            return {
+                'classification_map': classification_map,
+                'factor_matrix': factor_matrix,
+                'correlation_matrix': pd.DataFrame(),
+                'original_factor_count': len(dataFrames),
+                'final_factors': [],
+                'final_factor_count': 0,
+                'reduction_ratio': 0.0,
+                'processing_details': self.results,
+                'error': 'Empty factor matrix'
+            }
+        
         # Step 3: Calculate correlation matrix
         correlation_matrix = self.calculate_correlation_matrix(factor_matrix)
+        
+        if correlation_matrix.empty:
+            print("ERROR: Correlation matrix is empty - returning original factors")
+            return {
+                'classification_map': classification_map,
+                'factor_matrix': factor_matrix,
+                'correlation_matrix': correlation_matrix,
+                'original_factor_count': len(dataFrames),
+                'final_factors': list(factor_matrix.columns),
+                'final_factor_count': len(factor_matrix.columns),
+                'reduction_ratio': 1.0,
+                'processing_details': self.results,
+                'error': 'Empty correlation matrix'
+            }
         
         # Step 4: Hierarchical clustering selection
         clustered_factors = self.hierarchical_clustering_selection(correlation_matrix, classification_map)
@@ -846,7 +905,7 @@ class CountryFactorSelectionFramework:
             'original_factor_count': len(dataFrames),
             'final_factors': final_factors,
             'final_factor_count': len(final_factors),
-            'reduction_ratio': len(final_factors) / len(dataFrames),
+            'reduction_ratio': len(final_factors) / len(dataFrames) if len(dataFrames) > 0 else 0,
             'processing_details': self.results
         }
         
@@ -873,20 +932,22 @@ class CountryFactorSelectionFramework:
             print(f"\nData Quality:")
             print(f"  Qualifying metrics: {info['qualifying_metrics']}/{info['original_metrics']}")
             print(f"  Total observations: {info['final_observations']:,}")
-            print(f"  Average coverage: {np.mean(list(info['coverage_stats'].values())):.1%}")
+            if info['coverage_stats']:
+                print(f"  Average coverage: {np.mean(list(info['coverage_stats'].values())):.1%}")
         
         # Category breakdown
         classification_map = results['classification_map']
         final_factors = results['final_factors']
         
-        print(f"\nFactor Distribution by Category:")
-        category_counts = {}
-        for factor in final_factors:
-            category = classification_map.get(factor, 'Unknown')
-            category_counts[category] = category_counts.get(category, 0) + 1
-        
-        for category, count in sorted(category_counts.items()):
-            print(f"  {category:<15}: {count} factors")
+        if final_factors:
+            print(f"\nFactor Distribution by Category:")
+            category_counts = {}
+            for factor in final_factors:
+                category = classification_map.get(factor, 'Unknown')
+                category_counts[category] = category_counts.get(category, 0) + 1
+            
+            for category, count in sorted(category_counts.items()):
+                print(f"  {category:<15}: {count} factors")
         
         # High correlation summary
         if 'high_correlations' in self.results:
@@ -908,21 +969,24 @@ class CountryFactorSelectionFramework:
                 print(f"  Average cluster size: {avg_cluster_size:.1f}")
         
         # Final factor list
-        print(f"\nSelected Factors ({len(final_factors)}):")
-        print("-" * 50)
-        
-        # Group by category for display
-        categorized_factors = {}
-        for factor in sorted(final_factors):
-            category = classification_map.get(factor, 'Unknown')
-            if category not in categorized_factors:
-                categorized_factors[category] = []
-            categorized_factors[category].append(factor)
-        
-        for category in sorted(categorized_factors.keys()):
-            print(f"\n{category}:")
-            for i, factor in enumerate(categorized_factors[category], 1):
-                print(f"  {i}. {factor}")
+        if final_factors:
+            print(f"\nSelected Factors ({len(final_factors)}):")
+            print("-" * 50)
+            
+            # Group by category for display
+            categorized_factors = {}
+            for factor in sorted(final_factors):
+                category = classification_map.get(factor, 'Unknown')
+                if category not in categorized_factors:
+                    categorized_factors[category] = []
+                categorized_factors[category].append(factor)
+            
+            for category in sorted(categorized_factors.keys()):
+                print(f"\n{category}:")
+                for i, factor in enumerate(categorized_factors[category], 1):
+                    print(f"  {i}. {factor}")
+        else:
+            print(f"\nNo factors were selected!")
     
     def create_final_factor_matrix(self, dataFrames: Dict[str, pd.DataFrame], 
                                  selected_factors: List[str]) -> pd.DataFrame:
@@ -942,9 +1006,17 @@ class CountryFactorSelectionFramework:
         """
         print(f"Creating final factor matrix with {len(selected_factors)} factors...")
         
+        if not selected_factors:
+            print("WARNING: No selected factors provided, returning empty DataFrame")
+            return pd.DataFrame()
+        
         # Filter dataFrames to selected factors only
         selected_data = {factor: dataFrames[factor] for factor in selected_factors 
                         if factor in dataFrames}
+        
+        if not selected_data:
+            print("WARNING: None of the selected factors found in original dataFrames")
+            return pd.DataFrame()
         
         # Create standardized matrix using same process
         final_matrix = self.create_country_factor_matrix(selected_data)
@@ -968,9 +1040,18 @@ class CountryFactorSelectionFramework:
             Figure size
         """
         
+        if correlation_matrix.empty:
+            print("Cannot plot heatmap: correlation matrix is empty")
+            return
+        
         if selected_factors:
-            plot_matrix = correlation_matrix.loc[selected_factors, selected_factors]
-            title = f'Correlation Matrix - Selected Factors ({len(selected_factors)})'
+            # Filter to selected factors that exist in the matrix
+            available_factors = [f for f in selected_factors if f in correlation_matrix.columns]
+            if not available_factors:
+                print("Cannot plot heatmap: no selected factors found in correlation matrix")
+                return
+            plot_matrix = correlation_matrix.loc[available_factors, available_factors]
+            title = f'Correlation Matrix - Selected Factors ({len(available_factors)})'
         else:
             plot_matrix = correlation_matrix
             title = f'Correlation Matrix - All Factors ({len(correlation_matrix)})'
@@ -998,58 +1079,156 @@ class CountryFactorSelectionFramework:
         plt.tight_layout()
         plt.show()
 
-# Example usage
-if __name__ == "__main__":
+# Diagnostic function to help debug data structure issues
+def diagnose_dataframes_structure(dataFrames: Dict[str, pd.DataFrame]) -> None:
+    """
+    Diagnose the structure of dataFrames to identify potential issues.
     
-    # Initialize framework for country analysis
+    Parameters:
+    -----------
+    dataFrames : Dict[str, pd.DataFrame]
+        Dictionary of DataFrames to diagnose
+    """
+    
+    print("="*70)
+    print("DATAFRAMES STRUCTURE DIAGNOSIS")
+    print("="*70)
+    
+    if not dataFrames:
+        print("ERROR: dataFrames dictionary is empty!")
+        return
+    
+    print(f"Total metrics: {len(dataFrames)}")
+    
+    # Sample a few DataFrames for detailed inspection
+    sample_keys = list(dataFrames.keys())[:3]
+    
+    for key in sample_keys:
+        df = dataFrames[key]
+        print(f"\nMetric: {key}")
+        print(f"  Shape: {df.shape}")
+        print(f"  Index type: {type(df.index)}")
+        print(f"  Index name: {df.index.name}")
+        print(f"  Column count: {len(df.columns)}")
+        print(f"  Sample columns: {list(df.columns[:5])}")
+        print(f"  Sample index: {df.index[:3].tolist()}")
+        print(f"  Data types: {df.dtypes.value_counts().to_dict()}")
+        print(f"  Missing values: {df.isna().sum().sum()} / {df.size}")
+        
+        # Check for empty or all-NaN data
+        if df.empty:
+            print("  WARNING: DataFrame is empty!")
+        elif df.isna().all().all():
+            print("  WARNING: DataFrame contains only NaN values!")
+        
+        # Sample data
+        non_null_data = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+        if not non_null_data.empty:
+            print(f"  Non-null data shape: {non_null_data.shape}")
+            print(f"  Sample values:\n{non_null_data.iloc[:2, :3]}")
+        else:
+            print("  WARNING: No non-null data found after cleanup!")
+    
+    # Check data consistency across metrics
+    print(f"\nCONSISTENCY CHECK:")
+    
+    shapes = [df.shape for df in dataFrames.values() if isinstance(df, pd.DataFrame)]
+    unique_shapes = set(shapes)
+    print(f"  Unique shapes: {unique_shapes}")
+    
+    if len(unique_shapes) > 1:
+        print("  WARNING: DataFrames have inconsistent shapes!")
+        shape_counts = {}
+        for shape in shapes:
+            shape_counts[shape] = shape_counts.get(shape, 0) + 1
+        for shape, count in shape_counts.items():
+            print(f"    Shape {shape}: {count} DataFrames")
+    
+    # Check index consistency
+    indices = []
+    for key, df in list(dataFrames.items())[:5]:  # Check first 5
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            indices.append((key, df.index))
+    
+    if len(indices) > 1:
+        base_key, base_index = indices[0]
+        consistent_indices = True
+        for key, idx in indices[1:]:
+            if not base_index.equals(idx):
+                consistent_indices = False
+                break
+        
+        if consistent_indices:
+            print("  ✓ Indices are consistent across DataFrames")
+        else:
+            print("  WARNING: Indices are inconsistent across DataFrames!")
+            for key, idx in indices:
+                print(f"    {key}: {len(idx)} entries, type: {type(idx)}")
+
+# Usage example with diagnostics
+def run_factor_analysis_with_diagnostics(dataFrames: Dict[str, pd.DataFrame],
+                                       correlation_threshold: float = 0.85,
+                                       vif_threshold: float = 5.0,
+                                       min_data_coverage: float = 0.6) -> Dict[str, Any]:
+    """
+    Run factor analysis with comprehensive diagnostics.
+    
+    Parameters:
+    -----------
+    dataFrames : Dict[str, pd.DataFrame]
+        Dictionary of DataFrames to analyze
+    correlation_threshold : float
+        Correlation threshold for factor selection
+    vif_threshold : float  
+        VIF threshold for multicollinearity
+    min_data_coverage : float
+        Minimum data coverage threshold
+        
+    Returns:
+    --------
+    Dict[str, Any] : Analysis results
+    """
+    
+    # Step 1: Diagnose data structure
+    diagnose_dataframes_structure(dataFrames)
+    
+    # Step 2: Initialize and run framework
     framework = CountryFactorSelectionFramework(
-        correlation_threshold=0.85,
-        vif_threshold=5.0,
-        min_data_coverage=0.6
+        correlation_threshold=correlation_threshold,
+        vif_threshold=vif_threshold,
+        min_data_coverage=min_data_coverage
     )
     
-    print("Country-Level Factor Selection Framework Ready!")
-    print("\nFramework Features:")
-    print("- Cross-sectional standardization across countries")
-    print("- Hierarchical clustering with category awareness")
-    print("- VIF-based multicollinearity detection")
-    print("- Category balancing to ensure factor diversity")
-    print("- Robust statistical methods for financial data")
-    
-    print(f"\nConfiguration:")
-    print(f"- Correlation threshold: {framework.correlation_threshold}")
-    print(f"- VIF threshold: {framework.vif_threshold}")
-    print(f"- Minimum data coverage: {framework.min_data_coverage:.1%}")
-    
-    print("\nUsage Example:")
-    print("# Run complete analysis")
-    print("results = framework.run_complete_analysis(dataFrames)")
-    print("")
-    print("# Get selected factors")
-    print("selected_factors = results['final_factors']")
-    print("")
-    print("# Create final modeling matrix")
-    print("final_matrix = framework.create_final_factor_matrix(dataFrames, selected_factors)")
-    print("")
-    print("# Visualize correlations")
-    print("framework.plot_correlation_heatmap(results['correlation_matrix'], selected_factors)")
-    
-    # Show classification preview
-    classification_map = framework.create_classification_map()
-    
-    print(f"\nFactor Categories ({len(set(classification_map.values()))}):")
-    category_preview = {}
-    for factor, category in classification_map.items():
-        if category not in category_preview:
-            category_preview[category] = []
-        category_preview[category].append(factor)
-    
-    for category, factors in category_preview.items():
-        sample_factors = factors[:3]
-        if len(factors) > 3:
-            sample_factors.append(f"... (+{len(factors)-3} more)")
-        print(f"  {category:<15}: {', '.join(sample_factors)}")
+    # Step 3: Run analysis
+    try:
+        results = framework.run_complete_analysis(dataFrames)
+        
+        # Step 4: Additional validation if successful
+        if results['final_factors']:
+            print(f"\n{'='*70}")
+            print("RUNNING ADDITIONAL VALIDATION")
+            print(f"{'='*70}")
+            
+            validation = validate_factor_selection(
+                results['factor_matrix'], 
+                results['final_factors'],
+                correlation_threshold
+            )
+            results['validation'] = validation
+        
+        return results
+        
+    except Exception as e:
+        print(f"\nERROR in factor analysis: {e}")
+        print("This error suggests a data structure issue.")
+        
+        # Return diagnostic info
+        return {
+            'error': str(e),
+            'diagnostic_info': 'Run diagnose_dataframes_structure() for more details'
+        }
 
+# Additional helper functions
 def create_factor_analysis_report(results: Dict[str, Any], 
                                 output_file: str = 'factor_selection_report.txt') -> None:
     """
@@ -1068,6 +1247,12 @@ def create_factor_analysis_report(results: Dict[str, Any],
         f.write("QUANTITATIVE FACTOR SELECTION ANALYSIS REPORT\n")
         f.write("="*80 + "\n\n")
         
+        if 'error' in results:
+            f.write("ANALYSIS FAILED\n")
+            f.write("-"*40 + "\n")
+            f.write(f"Error: {results['error']}\n\n")
+            return
+        
         # Executive Summary
         f.write("EXECUTIVE SUMMARY\n")
         f.write("-"*40 + "\n")
@@ -1082,78 +1267,112 @@ def create_factor_analysis_report(results: Dict[str, Any],
             f.write("-"*40 + "\n")
             f.write(f"Qualifying Metrics: {info['qualifying_metrics']}/{info['original_metrics']}\n")
             f.write(f"Total Observations: {info['final_observations']:,}\n")
-            f.write(f"Average Coverage: {np.mean(list(info['coverage_stats'].values())):.1%}\n\n")
+            if info['coverage_stats']:
+                f.write(f"Average Coverage: {np.mean(list(info['coverage_stats'].values())):.1%}\n\n")
         
         # Selected Factors by Category
-        classification_map = results['classification_map']
-        final_factors = results['final_factors']
-        
-        categorized_factors = {}
-        for factor in sorted(final_factors):
-            category = classification_map.get(factor, 'Unknown')
-            if category not in categorized_factors:
-                categorized_factors[category] = []
-            categorized_factors[category].append(factor)
-        
-        f.write("SELECTED FACTORS BY CATEGORY\n")
-        f.write("-"*40 + "\n")
-        for category in sorted(categorized_factors.keys()):
-            f.write(f"\n{category.upper()} ({len(categorized_factors[category])}):\n")
-            for i, factor in enumerate(categorized_factors[category], 1):
-                f.write(f"  {i:2d}. {factor}\n")
-        
-        # Correlation Analysis
-        if 'high_correlations' in results['processing_details']:
-            high_corrs = results['processing_details']['high_correlations']
-            f.write(f"\nCORRELATION ANALYSIS\n")
+        if results['final_factors']:
+            classification_map = results['classification_map']
+            final_factors = results['final_factors']
+            
+            categorized_factors = {}
+            for factor in sorted(final_factors):
+                category = classification_map.get(factor, 'Unknown')
+                if category not in categorized_factors:
+                    categorized_factors[category] = []
+                categorized_factors[category].append(factor)
+            
+            f.write("SELECTED FACTORS BY CATEGORY\n")
             f.write("-"*40 + "\n")
-            f.write(f"High Correlations Identified: {len(high_corrs)}\n")
-            
-            if high_corrs:
-                f.write("\nTop 10 Highest Correlations (before clustering):\n")
-                sorted_corrs = sorted(high_corrs, key=lambda x: abs(x['correlation']), reverse=True)
-                for i, corr in enumerate(sorted_corrs[:10], 1):
-                    f.write(f"  {i:2d}. {corr['factor1']} ↔ {corr['factor2']}: "
-                           f"{corr['correlation']:+.3f} (p={corr['p_value']:.3f})\n")
+            for category in sorted(categorized_factors.keys()):
+                f.write(f"\n{category.upper()} ({len(categorized_factors[category])}):\n")
+                for i, factor in enumerate(categorized_factors[category], 1):
+                    f.write(f"  {i:2d}. {factor}\n")
         
-        # Clustering Analysis
-        if 'clustering_analysis' in results['processing_details']:
-            clusters = results['processing_details']['clustering_analysis']
-            multi_clusters = [c for c in clusters if c['size'] > 1]
-            
-            f.write(f"\nCLUSTERING ANALYSIS\n")
-            f.write("-"*40 + "\n")
-            f.write(f"Total Clusters: {len(clusters)}\n")
-            f.write(f"Multi-Factor Clusters: {len(multi_clusters)}\n")
-            
-            if multi_clusters:
-                f.write("\nMulti-Factor Clusters:\n")
-                for cluster in multi_clusters:
-                    f.write(f"\nCluster {cluster['cluster_id']} (Size: {cluster['size']}):\n")
-                    f.write(f"  Selected: {cluster['selected']}\n")
-                    f.write(f"  All Factors: {', '.join(cluster['factors'])}\n")
-                    if 'avg_correlation' in cluster:
-                        f.write(f"  Avg Correlation: {cluster['avg_correlation']:.3f}\n")
-        
-        # VIF Analysis
-        if 'vif_analysis' in results['processing_details']:
-            vif_results = results['processing_details']['vif_analysis']
-            removed_factors = [r for r in vif_results if r['action'] == 'removed']
-            
-            f.write(f"\nVARIANCE INFLATION FACTOR ANALYSIS\n")
-            f.write("-"*40 + "\n")
-            f.write(f"Factors Removed: {len(removed_factors)}\n")
-            
-            if removed_factors:
-                f.write("\nRemoved Factors (High Multicollinearity):\n")
-                for i, result in enumerate(removed_factors, 1):
-                    f.write(f"  {i:2d}. {result['factor']}: VIF = {result['vif']:.2f}\n")
-        
+        # Add other report sections...
         f.write(f"\n" + "="*80 + "\n")
         f.write("END OF REPORT\n")
         f.write("="*80 + "\n")
     
     print(f"✓ Comprehensive report saved to: {output_file}")
+
+def validate_factor_selection(factor_matrix: pd.DataFrame, 
+                            selected_factors: List[str],
+                            correlation_threshold: float = 0.85) -> Dict[str, Any]:
+    """
+    Validate the quality of factor selection.
+    """
+    
+    print("Validating factor selection quality...")
+    
+    if factor_matrix.empty or not selected_factors:
+        return {
+            'error': 'Empty factor matrix or no selected factors',
+            'n_factors': 0,
+            'n_observations': 0
+        }
+    
+    # Get selected factor data
+    available_factors = [f for f in selected_factors if f in factor_matrix.columns]
+    selected_data = factor_matrix[available_factors].dropna()
+    
+    if selected_data.empty:
+        return {
+            'error': 'No data available for selected factors',
+            'n_factors': len(available_factors),
+            'n_observations': 0
+        }
+    
+    # Calculate final correlations
+    final_corr = selected_data.corr(method='spearman')
+    
+    # Check for remaining high correlations
+    high_corr_pairs = []
+    n_factors = len(available_factors)
+    
+    for i in range(n_factors):
+        for j in range(i+1, n_factors):
+            corr_val = final_corr.iloc[i, j]
+            if abs(corr_val) >= correlation_threshold:
+                high_corr_pairs.append({
+                    'factor1': available_factors[i],
+                    'factor2': available_factors[j],
+                    'correlation': corr_val
+                })
+    
+    # Calculate factor statistics
+    factor_stats = {}
+    for factor in available_factors:
+        data = selected_data[factor]
+        factor_stats[factor] = {
+            'mean': data.mean(),
+            'std': data.std(),
+            'skewness': data.skew(),
+            'kurtosis': data.kurtosis(),
+            'missing_pct': data.isna().mean()
+        }
+    
+    # Overall validation metrics
+    validation_results = {
+        'n_factors': len(available_factors),
+        'n_observations': len(selected_data),
+        'high_correlations_remaining': len(high_corr_pairs),
+        'max_abs_correlation': final_corr.abs().values[np.triu_indices_from(final_corr.values, k=1)].max() if len(final_corr) > 1 else 0,
+        'avg_abs_correlation': final_corr.abs().values[np.triu_indices_from(final_corr.values, k=1)].mean() if len(final_corr) > 1 else 0,
+        'correlation_matrix': final_corr,
+        'high_corr_pairs': high_corr_pairs,
+        'factor_statistics': factor_stats
+    }
+    
+    # Print validation summary
+    print(f"✓ Validation completed:")
+    print(f"  - Final factor count: {validation_results['n_factors']}")
+    print(f"  - Observations: {validation_results['n_observations']:,}")
+    print(f"  - Remaining high correlations: {validation_results['high_correlations_remaining']}")
+    print(f"  - Max absolute correlation: {validation_results['max_abs_correlation']:.3f}")
+    print(f"  - Average absolute correlation: {validation_results['avg_abs_correlation']:.3f}")
+    
+    return validation_results
 
 
 def export_selected_factors_data(dataFrames: Dict[str, pd.DataFrame], 
@@ -1211,95 +1430,14 @@ def export_selected_factors_data(dataFrames: Dict[str, pd.DataFrame],
     print(f"\n✓ Export completed: {exported_count}/{len(selected_factors)} factors")
     print(f"✓ Files saved to: {output_folder}/")
 
-
-# Advanced analysis functions for post-selection validation
-def validate_factor_selection(factor_matrix: pd.DataFrame, 
-                            selected_factors: List[str],
-                            correlation_threshold: float = 0.85) -> Dict[str, Any]:
-    """
-    Validate the quality of factor selection by checking final correlations
-    and other statistical properties.
-    
-    Parameters:
-    -----------
-    factor_matrix : pd.DataFrame
-        Complete factor matrix
-    selected_factors : List[str]
-        Selected factors to validate
-    correlation_threshold : float
-        Correlation threshold for validation
-        
-    Returns:
-    --------
-    Dict[str, Any] : Validation results
-    """
-    
-    print("Validating factor selection quality...")
-    
-    # Get selected factor data
-    selected_data = factor_matrix[selected_factors].dropna()
-    
-    # Calculate final correlations
-    final_corr = selected_data.corr(method='spearman')
-    
-    # Check for remaining high correlations
-    high_corr_pairs = []
-    n_factors = len(selected_factors)
-    
-    for i in range(n_factors):
-        for j in range(i+1, n_factors):
-            corr_val = final_corr.iloc[i, j]
-            if abs(corr_val) >= correlation_threshold:
-                high_corr_pairs.append({
-                    'factor1': selected_factors[i],
-                    'factor2': selected_factors[j],
-                    'correlation': corr_val
-                })
-    
-    # Calculate factor statistics
-    factor_stats = {}
-    for factor in selected_factors:
-        data = selected_data[factor]
-        factor_stats[factor] = {
-            'mean': data.mean(),
-            'std': data.std(),
-            'skewness': data.skew(),
-            'kurtosis': data.kurtosis(),
-            'missing_pct': data.isna().mean()
-        }
-    
-    # Overall validation metrics
-    validation_results = {
-        'n_factors': len(selected_factors),
-        'n_observations': len(selected_data),
-        'high_correlations_remaining': len(high_corr_pairs),
-        'max_abs_correlation': final_corr.abs().values[np.triu_indices_from(final_corr.values, k=1)].max(),
-        'avg_abs_correlation': final_corr.abs().values[np.triu_indices_from(final_corr.values, k=1)].mean(),
-        'correlation_matrix': final_corr,
-        'high_corr_pairs': high_corr_pairs,
-        'factor_statistics': factor_stats
-    }
-    
-    # Print validation summary
-    print(f"✓ Validation completed:")
-    print(f"  - Final factor count: {validation_results['n_factors']}")
-    print(f"  - Observations: {validation_results['n_observations']:,}")
-    print(f"  - Remaining high correlations: {validation_results['high_correlations_remaining']}")
-    print(f"  - Max absolute correlation: {validation_results['max_abs_correlation']:.3f}")
-    print(f"  - Average absolute correlation: {validation_results['avg_abs_correlation']:.3f}")
-    
-    return validation_results
-
 #%%
-
-# Initialize framework
+# Use lower threshold
 framework = CountryFactorSelectionFramework(
     correlation_threshold=0.85,
     vif_threshold=5.0,
-    min_data_coverage=0.6  # 60% minimum data coverage
+    min_data_coverage=0.3  # Much lower threshold
 )
 
-# Run complete analysis on your DataFrames
 results = framework.run_complete_analysis(dataFrames)
 
 # Get selected factors
@@ -1310,13 +1448,13 @@ final_matrix = framework.create_final_factor_matrix(dataFrames, selected_factors
 
 # Plot final correlation matrix
 framework.plot_correlation_heatmap(results['correlation_matrix'])
-
+#%%
 # Export selected factors
 export_selected_factors_data(dataFrames, selected_factors, 'SelectedFactors')
 
 # Generate comprehensive report
-#create_factor_analysis_report(results, 'factor_analysis_report.txt')
-#%%
+create_factor_analysis_report(results, 'factor_analysis_report.txt')
+
 # Validate selection quality
 validation = validate_factor_selection(
     results['factor_matrix'], 
