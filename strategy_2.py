@@ -12,6 +12,7 @@ import os
 import pandas as pd
 import numpy as np
 import warnings
+
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy import stats
@@ -21,6 +22,7 @@ from sklearn.decomposition import PCA
 from sklearn.feature_selection import mutual_info_regression
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from typing import Dict, List, Tuple, Any
+import warnings
 warnings.filterwarnings('ignore')
 
 
@@ -196,6 +198,8 @@ print(f"   • processed_data: Same as dataFrames (alias)")
 fm.explore_data(dataFrames, regions_dict)
 
 #%%
+
+
 class CountryFactorSelectionFramework:
     """
     Advanced framework for factor selection and correlation filtering for country-level analysis.
@@ -336,40 +340,27 @@ class CountryFactorSelectionFramework:
         --------
         pd.DataFrame : Standardized country-factor matrix
         """
-        from sklearn.preprocessing import StandardScaler
-        
         print("Creating country-factor matrix...")
         print(f"Processing {len(dataFrames)} metrics...")
-        
-        if not dataFrames:
-            raise ValueError("No metrics provided in dataFrames dictionary")
         
         # Step 1: Stack all DataFrames to create long-format data
         factor_panels = {}
         
         for metric_name, metric_df in dataFrames.items():
             if isinstance(metric_df, pd.DataFrame) and not metric_df.empty:
-                print(f"  Processing {metric_name}: shape {metric_df.shape}")
+                # Stack the DataFrame: (date, country) -> value
+                stacked = metric_df.stack()
+                stacked.name = metric_name
                 
-                try:
-                    # Stack the DataFrame: (date, country) -> value
-                    stacked = metric_df.stack()
-                    stacked.name = metric_name
-                    
-                    # Check data coverage
-                    total_possible = len(metric_df.index) * len(metric_df.columns)
-                    coverage = stacked.notna().sum() / total_possible if total_possible > 0 else 0
-                    
-                    if coverage >= self.min_data_coverage:
-                        factor_panels[metric_name] = stacked
-                        print(f"    ✓ {metric_name}: {coverage:.1%} coverage, {stacked.notna().sum()} valid observations")
-                    else:
-                        print(f"    ✗ {metric_name}: {coverage:.1%} coverage (below {self.min_data_coverage:.1%} threshold)")
-                        
-                except Exception as e:
-                    print(f"    ✗ Error processing {metric_name}: {e}")
-            else:
-                print(f"  ✗ Skipping {metric_name}: empty or invalid DataFrame")
+                # Check data coverage
+                total_possible = len(metric_df.index) * len(metric_df.columns)
+                coverage = stacked.notna().sum() / total_possible
+                
+                if coverage >= self.min_data_coverage:
+                    factor_panels[metric_name] = stacked
+                    print(f"  ✓ {metric_name}: {coverage:.1%} coverage")
+                else:
+                    print(f"  ✗ {metric_name}: {coverage:.1%} coverage (below threshold)")
         
         # Step 2: Combine all factors into single DataFrame
         print(f"\nCombining {len(factor_panels)} qualifying metrics...")
@@ -379,150 +370,93 @@ class CountryFactorSelectionFramework:
         
         # Create multi-index DataFrame
         combined_data = pd.DataFrame(factor_panels)
-        print(f"Combined data shape: {combined_data.shape}")
-        print(f"Non-null values in combined data: {combined_data.notna().sum().sum()}")
         
-        if combined_data.empty:
-            raise ValueError("Combined data is empty after stacking")
-        
-        # Step 3: Cross-sectional standardization at each date using StandardScaler
+        # Step 3: Cross-sectional standardization at each date
         print("Performing cross-sectional standardization...")
         
         standardized_data = pd.DataFrame(index=combined_data.index, 
-                                       columns=combined_data.columns,
-                                       dtype=float)
+                                       columns=combined_data.columns)
         
-        # Check if we have MultiIndex (date, country) structure
-        if isinstance(combined_data.index, pd.MultiIndex):
-            print("Processing MultiIndex structure...")
-            
-            # Get unique dates from first level
-            unique_dates = combined_data.index.get_level_values(0).unique()
-            print(f"Found {len(unique_dates)} unique dates")
-            
+        # Get unique dates - handle both MultiIndex and regular index cases
+        try:
+            if isinstance(combined_data.index, pd.MultiIndex):
+                # Assume first level is dates
+                unique_dates = combined_data.index.get_level_values(0).unique()
+                print(f"Found {len(unique_dates)} unique dates in MultiIndex")
+            else:
+                # If not MultiIndex, treat index as dates
+                unique_dates = combined_data.index.unique()
+                print(f"Found {len(unique_dates)} unique dates in regular index")
+                
             dates_processed = 0
-            dates_with_data = 0
-            
             for date in unique_dates:
                 try:
-                    # Get data for this date across all countries
-                    date_data = combined_data.loc[date]
+                    if isinstance(combined_data.index, pd.MultiIndex):
+                        date_data = combined_data.loc[date]
+                    else:
+                        date_data = combined_data.loc[[date]]
                     
-                    if isinstance(date_data, pd.Series):
-                        # Only one country for this date, convert to DataFrame
-                        date_data = date_data.to_frame().T
-                    
-                    if len(date_data) > 0 and not date_data.empty:
-                        # Apply StandardScaler column by column (factor by factor)
+                    if len(date_data) > 1:  # Need multiple countries for standardization
+                        # Robust standardization using median and MAD
                         for col in date_data.columns:
-                            col_values = date_data[col].dropna()
+                            col_data = date_data[col].dropna()
                             
-                            if len(col_values) >= 2:  # Need at least 2 countries for standardization
-                                # Use StandardScaler for robust standardization
-                                scaler = StandardScaler()
-                                try:
-                                    # Reshape for sklearn
-                                    values_reshaped = col_values.values.reshape(-1, 1)
-                                    standardized_values = scaler.fit_transform(values_reshaped).flatten()
+                            if len(col_data) >= 2:  # Minimum countries for meaningful standardization
+                                median_val = col_data.median()
+                                mad_val = np.median(np.abs(col_data - median_val))
+                                
+                                if mad_val > 0:
+                                    # Convert MAD to standard deviation equivalent
+                                    if isinstance(combined_data.index, pd.MultiIndex):
+                                        standardized_data.loc[date, col] = (col_data - median_val) / (1.4826 * mad_val)
+                                    else:
+                                        standardized_data.loc[[date], col] = (col_data - median_val) / (1.4826 * mad_val)
+                                else:
+                                    # If MAD is 0, use simple centering
+                                    if isinstance(combined_data.index, pd.MultiIndex):
+                                        standardized_data.loc[date, col] = col_data - median_val
+                                    else:
+                                        standardized_data.loc[[date], col] = col_data - median_val
+                            else:
+                                # Insufficient data for standardization - keep original
+                                if isinstance(combined_data.index, pd.MultiIndex):
+                                    standardized_data.loc[date, col] = date_data[col]
+                                else:
+                                    standardized_data.loc[[date], col] = date_data[col]
                                     
-                                    # Map back to original index
-                                    for idx, std_val in zip(col_values.index, standardized_values):
-                                        standardized_data.loc[(date, idx), col] = std_val
-                                        
-                                    dates_with_data += 1
-                                    
-                                except Exception as e:
-                                    print(f"      Warning: StandardScaler failed for {col} on {date}: {e}")
-                                    # Fallback to manual standardization
-                                    mean_val = col_values.mean()
-                                    std_val = col_values.std()
-                                    if std_val > 0:
-                                        standardized_vals = (col_values - mean_val) / std_val
-                                        for idx, std_val in zip(col_values.index, standardized_vals):
-                                            standardized_data.loc[(date, idx), col] = std_val
+                        dates_processed += 1
+                        if dates_processed % 50 == 0:
+                            print(f"    Processed {dates_processed}/{len(unique_dates)} dates...")
                             
-                            elif len(col_values) == 1:
-                                # Only one country - set to zero (neutral)
-                                standardized_data.loc[(date, col_values.index[0]), col] = 0.0
-                    
-                    dates_processed += 1
-                    if dates_processed % 100 == 0:
-                        print(f"    Processed {dates_processed}/{len(unique_dates)} dates, {dates_with_data} with valid data")
-                        
                 except Exception as e:
                     print(f"    Warning: Error processing date {date}: {e}")
                     continue
-            
-            print(f"✓ Processed {dates_processed} dates, {dates_with_data} dates had valid data")
-            
-        else:
-            # Regular index - assume each row is an observation
-            print("Processing regular index structure...")
-            print("Warning: Expected MultiIndex structure, attempting simple standardization")
-            
-            # Apply StandardScaler to each column independently
+                    
+        except Exception as e:
+            print(f"Error in standardization: {e}")
+            # Fallback: simple standardization across entire dataset
+            print("Falling back to simple standardization...")
             for col in combined_data.columns:
                 col_data = combined_data[col].dropna()
-                
-                if len(col_data) > 1:
-                    scaler = StandardScaler()
-                    try:
-                        values_reshaped = col_data.values.reshape(-1, 1)
-                        standardized_values = scaler.fit_transform(values_reshaped).flatten()
-                        
-                        # Map back to original positions
-                        for idx, std_val in zip(col_data.index, standardized_values):
-                            standardized_data.loc[idx, col] = std_val
-                            
-                    except Exception as e:
-                        print(f"    Warning: StandardScaler failed for {col}: {e}")
-                        # Fallback
-                        mean_val = col_data.mean()
-                        std_val = col_data.std()
-                        if std_val > 0:
-                            standardized_data[col] = (combined_data[col] - mean_val) / std_val
-                        else:
-                            standardized_data[col] = combined_data[col] - mean_val
-                else:
-                    # Insufficient data
-                    standardized_data[col] = combined_data[col]
+                if len(col_data) > 0:
+                    standardized_data[col] = (combined_data[col] - col_data.median()) / col_data.std()
         
-        # Step 4: Clean up the standardized data and validate
-        print("Cleaning up standardized data...")
-        
-        # Remove rows and columns that are entirely NaN
+        # Step 4: Clean up the standardized data
         final_data = standardized_data.dropna(how='all', axis=0).dropna(how='all', axis=1)
         
-        print(f"Data cleanup: {standardized_data.shape} → {final_data.shape}")
-        print(f"Non-null values after standardization: {final_data.notna().sum().sum()}")
+        print(f"✓ Created standardized matrix: {final_data.shape[0]} observations × {final_data.shape[1]} factors")
         
         if final_data.empty:
-            print("ERROR: Final standardized matrix is empty!")
+            print("WARNING: Final standardized matrix is empty!")
             print("Debug information:")
             print(f"  - Original combined data shape: {combined_data.shape}")
             print(f"  - Non-null values in combined data: {combined_data.notna().sum().sum()}")
-            print(f"  - Standardized data shape before cleanup: {standardized_data.shape}")
+            print(f"  - Standardized data shape: {standardized_data.shape}")
             print(f"  - Non-null values in standardized data: {standardized_data.notna().sum().sum()}")
             
-            # Debug: Show sample of what we have
-            print(f"  - Sample combined data:")
-            print(combined_data.head())
-            print(f"  - Sample standardized data:")
-            print(standardized_data.head())
-            
-            # Return the combined data as fallback
-            print("  - Returning unstandardized combined data as fallback")
-            final_data = combined_data.dropna(how='all', axis=0).dropna(how='all', axis=1)
-            
-        else:
-            # Validate standardization worked
-            print("Standardization validation:")
-            for col in final_data.columns:
-                col_data = final_data[col].dropna()
-                if len(col_data) > 1:
-                    print(f"  {col}: mean={col_data.mean():.3f}, std={col_data.std():.3f}")
-        
-        print(f"✓ Created factor matrix: {final_data.shape[0]} observations × {final_data.shape[1]} factors")
+            # Return a minimal valid matrix for debugging
+            if not combined_data.empty:
+                return combined_data.dropna(how='all', axis=0).dropna(how='all', axis=1)
         
         # Store metadata
         self.results['data_info'] = {
@@ -533,11 +467,6 @@ class CountryFactorSelectionFramework:
             'coverage_stats': {metric: factor_panels[metric].notna().mean() 
                              for metric in factor_panels.keys()}
         }
-        
-        # Store intermediate results for debugging
-        self.results['combined_data'] = combined_data
-        self.results['standardized_data'] = standardized_data
-        self.results['final_data'] = final_data
         
         return final_data
     
@@ -1121,131 +1050,110 @@ if __name__ == "__main__":
             sample_factors.append(f"... (+{len(factors)-3} more)")
         print(f"  {category:<15}: {', '.join(sample_factors)}")
 
-
-    def create_factor_analysis_report(results: Dict[str, Any], 
-                                    output_file: str = 'factor_selection_report.txt') -> None:
-        """
-        Create a comprehensive text report of the factor selection analysis.
+def create_factor_analysis_report(results: Dict[str, Any], 
+                                output_file: str = 'factor_selection_report.txt') -> None:
+    """
+    Create a comprehensive text report of the factor selection analysis.
+    
+    Parameters:
+    -----------
+    results : Dict[str, Any]
+        Results from run_complete_analysis
+    output_file : str
+        Output file path
+    """
+    
+    with open(output_file, 'w') as f:
+        f.write("="*80 + "\n")
+        f.write("QUANTITATIVE FACTOR SELECTION ANALYSIS REPORT\n")
+        f.write("="*80 + "\n\n")
         
-        Parameters:
-        -----------
-        results : Dict[str, Any]
-            Results from run_complete_analysis
-        output_file : str
-            Output file path
-        """
+        # Executive Summary
+        f.write("EXECUTIVE SUMMARY\n")
+        f.write("-"*40 + "\n")
+        f.write(f"Original Metrics: {results['original_factor_count']}\n")
+        f.write(f"Selected Factors: {results['final_factor_count']}\n")
+        f.write(f"Reduction Ratio: {results['reduction_ratio']:.1%}\n\n")
         
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write("="*80 + "\n")
-            f.write("QUANTITATIVE FACTOR SELECTION ANALYSIS REPORT\n")
-            f.write("="*80 + "\n\n")
-            
-            if 'error' in results:
-                f.write("ANALYSIS FAILED\n")
-                f.write("-"*40 + "\n")
-                f.write(f"Error: {results['error']}\n\n")
-                return
-            
-            # Executive Summary
-            f.write("EXECUTIVE SUMMARY\n")
+        # Data Quality
+        if 'data_info' in results['processing_details']:
+            info = results['processing_details']['data_info']
+            f.write("DATA QUALITY ASSESSMENT\n")
             f.write("-"*40 + "\n")
-            f.write(f"Original Metrics: {results['original_factor_count']}\n")
-            f.write(f"Selected Factors: {results['final_factor_count']}\n")
-            f.write(f"Reduction Ratio: {results['reduction_ratio']:.1%}\n\n")
-            
-            # Data Quality
-            if 'data_info' in results['processing_details']:
-                info = results['processing_details']['data_info']
-                f.write("DATA QUALITY ASSESSMENT\n")
-                f.write("-"*40 + "\n")
-                f.write(f"Qualifying Metrics: {info['qualifying_metrics']}/{info['original_metrics']}\n")
-                f.write(f"Total Observations: {info['final_observations']:,}\n")
-                if info['coverage_stats']:
-                    f.write(f"Average Coverage: {np.mean(list(info['coverage_stats'].values())):.1%}\n\n")
-            
-            # Selected Factors by Category
-            if results['final_factors']:
-                classification_map = results['classification_map']
-                final_factors = results['final_factors']
-                
-                categorized_factors = {}
-                for factor in sorted(final_factors):
-                    category = classification_map.get(factor, 'Unknown')
-                    if category not in categorized_factors:
-                        categorized_factors[category] = []
-                    categorized_factors[category].append(factor)
-                
-                f.write("SELECTED FACTORS BY CATEGORY\n")
-                f.write("-"*40 + "\n")
-                for category in sorted(categorized_factors.keys()):
-                    f.write(f"\n{category.upper()} ({len(categorized_factors[category])}):\n")
-                    for i, factor in enumerate(categorized_factors[category], 1):
-                        f.write(f"  {i:2d}. {factor}\n")
-            
-            # Correlation Analysis
-            if 'high_correlations' in results['processing_details']:
-                high_corrs = results['processing_details']['high_correlations']
-                f.write(f"\nCORRELATION ANALYSIS\n")
-                f.write("-"*40 + "\n")
-                f.write(f"High Correlations Identified: {len(high_corrs)}\n")
-                
-                if high_corrs:
-                    f.write("\nTop 10 Highest Correlations (before clustering):\n")
-                    sorted_corrs = sorted(high_corrs, key=lambda x: abs(x['correlation']), reverse=True)
-                    for i, corr in enumerate(sorted_corrs[:10], 1):
-                        f.write(f"  {i:2d}. {corr['factor1']} <-> {corr['factor2']}: "
-                               f"{corr['correlation']:+.3f} (p={corr['p_value']:.3f})\n")
-            
-            # Clustering Analysis
-            if 'clustering_analysis' in results['processing_details']:
-                clusters = results['processing_details']['clustering_analysis']
-                multi_clusters = [c for c in clusters if c['size'] > 1]
-                
-                f.write(f"\nCLUSTERING ANALYSIS\n")
-                f.write("-"*40 + "\n")
-                f.write(f"Total Clusters: {len(clusters)}\n")
-                f.write(f"Multi-Factor Clusters: {len(multi_clusters)}\n")
-                
-                if multi_clusters:
-                    f.write("\nMulti-Factor Clusters:\n")
-                    for cluster in multi_clusters:
-                        f.write(f"\nCluster {cluster['cluster_id']} (Size: {cluster['size']}):\n")
-                        f.write(f"  Selected: {cluster['selected']}\n")
-                        f.write(f"  All Factors: {', '.join(cluster['factors'])}\n")
-                        if 'avg_correlation' in cluster:
-                            f.write(f"  Avg Correlation: {cluster['avg_correlation']:.3f}\n")
-            
-            # VIF Analysis
-            if 'vif_analysis' in results['processing_details']:
-                vif_results = results['processing_details']['vif_analysis']
-                removed_factors = [r for r in vif_results if r['action'] == 'removed']
-                
-                f.write(f"\nVARIANCE INFLATION FACTOR ANALYSIS\n")
-                f.write("-"*40 + "\n")
-                f.write(f"Factors Removed: {len(removed_factors)}\n")
-                
-                if removed_factors:
-                    f.write("\nRemoved Factors (High Multicollinearity):\n")
-                    for i, result in enumerate(removed_factors, 1):
-                        f.write(f"  {i:2d}. {result['factor']}: VIF = {result['vif']:.2f}\n")
-            
-            # Category Balancing
-            if 'category_balancing' in results['processing_details']:
-                balancing_info = results['processing_details']['category_balancing']
-                f.write(f"\nCATEGORY BALANCING\n")
-                f.write("-"*40 + "\n")
-                
-                for category, info in balancing_info.items():
-                    if info['original'] != info['final']:
-                        f.write(f"{category}: {info['original']} -> {info['final']} factors\n")
-                    else:
-                        f.write(f"{category}: {info['final']} factors (no change)\n")
-            
-            f.write(f"\n" + "="*80 + "\n")
-            f.write("END OF REPORT\n")
-            f.write("="*80 + "\n")
+            f.write(f"Qualifying Metrics: {info['qualifying_metrics']}/{info['original_metrics']}\n")
+            f.write(f"Total Observations: {info['final_observations']:,}\n")
+            f.write(f"Average Coverage: {np.mean(list(info['coverage_stats'].values())):.1%}\n\n")
         
-        print(f"✓ Comprehensive report saved to: {output_file}")
+        # Selected Factors by Category
+        classification_map = results['classification_map']
+        final_factors = results['final_factors']
+        
+        categorized_factors = {}
+        for factor in sorted(final_factors):
+            category = classification_map.get(factor, 'Unknown')
+            if category not in categorized_factors:
+                categorized_factors[category] = []
+            categorized_factors[category].append(factor)
+        
+        f.write("SELECTED FACTORS BY CATEGORY\n")
+        f.write("-"*40 + "\n")
+        for category in sorted(categorized_factors.keys()):
+            f.write(f"\n{category.upper()} ({len(categorized_factors[category])}):\n")
+            for i, factor in enumerate(categorized_factors[category], 1):
+                f.write(f"  {i:2d}. {factor}\n")
+        
+        # Correlation Analysis
+        if 'high_correlations' in results['processing_details']:
+            high_corrs = results['processing_details']['high_correlations']
+            f.write(f"\nCORRELATION ANALYSIS\n")
+            f.write("-"*40 + "\n")
+            f.write(f"High Correlations Identified: {len(high_corrs)}\n")
+            
+            if high_corrs:
+                f.write("\nTop 10 Highest Correlations (before clustering):\n")
+                sorted_corrs = sorted(high_corrs, key=lambda x: abs(x['correlation']), reverse=True)
+                for i, corr in enumerate(sorted_corrs[:10], 1):
+                    f.write(f"  {i:2d}. {corr['factor1']} ↔ {corr['factor2']}: "
+                           f"{corr['correlation']:+.3f} (p={corr['p_value']:.3f})\n")
+        
+        # Clustering Analysis
+        if 'clustering_analysis' in results['processing_details']:
+            clusters = results['processing_details']['clustering_analysis']
+            multi_clusters = [c for c in clusters if c['size'] > 1]
+            
+            f.write(f"\nCLUSTERING ANALYSIS\n")
+            f.write("-"*40 + "\n")
+            f.write(f"Total Clusters: {len(clusters)}\n")
+            f.write(f"Multi-Factor Clusters: {len(multi_clusters)}\n")
+            
+            if multi_clusters:
+                f.write("\nMulti-Factor Clusters:\n")
+                for cluster in multi_clusters:
+                    f.write(f"\nCluster {cluster['cluster_id']} (Size: {cluster['size']}):\n")
+                    f.write(f"  Selected: {cluster['selected']}\n")
+                    f.write(f"  All Factors: {', '.join(cluster['factors'])}\n")
+                    if 'avg_correlation' in cluster:
+                        f.write(f"  Avg Correlation: {cluster['avg_correlation']:.3f}\n")
+        
+        # VIF Analysis
+        if 'vif_analysis' in results['processing_details']:
+            vif_results = results['processing_details']['vif_analysis']
+            removed_factors = [r for r in vif_results if r['action'] == 'removed']
+            
+            f.write(f"\nVARIANCE INFLATION FACTOR ANALYSIS\n")
+            f.write("-"*40 + "\n")
+            f.write(f"Factors Removed: {len(removed_factors)}\n")
+            
+            if removed_factors:
+                f.write("\nRemoved Factors (High Multicollinearity):\n")
+                for i, result in enumerate(removed_factors, 1):
+                    f.write(f"  {i:2d}. {result['factor']}: VIF = {result['vif']:.2f}\n")
+        
+        f.write(f"\n" + "="*80 + "\n")
+        f.write("END OF REPORT\n")
+        f.write("="*80 + "\n")
+    
+    print(f"✓ Comprehensive report saved to: {output_file}")
 
 
 def export_selected_factors_data(dataFrames: Dict[str, pd.DataFrame], 
@@ -1406,12 +1314,14 @@ framework.plot_correlation_heatmap(results['correlation_matrix'])
 # Export selected factors
 export_selected_factors_data(dataFrames, selected_factors, 'SelectedFactors')
 
+# Generate comprehensive report
+#create_factor_analysis_report(results, 'factor_analysis_report.txt')
+#%%
 # Validate selection quality
 validation = validate_factor_selection(
     results['factor_matrix'], 
-    selected_factors)
+    selected_factors
+)
 
-
-# Generate comprehensive report
-create_factor_analysis_report(results, 'factor_analysis_report.txt')
+#%%
 

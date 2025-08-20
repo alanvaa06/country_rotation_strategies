@@ -1,9 +1,17 @@
-# Data files
-*.csv
+# Data files - Excel and CSV
 *.xlsx
 *.xls
 *.xlsm
 *.xlsb
+*.csv
+
+# Data folders containing Excel files
+Inputs/
+ProcessedInputs/
+Outputs/
+InputsProcessed/
+SelectedFactors/
+SelectedFactors_ VIF/
 
 # Python
 __pycache__/
@@ -30,6 +38,7 @@ MANIFEST
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb
 
 # Environment variables
 .env
@@ -63,3 +72,27 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+# Backup files
+*.bak
+*.backup
+
+# Large data files (over 1MB)
+*.xlsx
+*.xls
+*.csv
+*.parquet
+*.h5
+*.hdf5
+
+# Specific data files that should be ignored
+Classification.xlsx
+factor_analysis_report.txt
+
+# Analysis outputs
+Scores/
+HistScores/
+first_valid_indexes*.xlsx
+scores*.xlsx
+backtest_results*.xlsx
+performance_metrics*.xlsx
