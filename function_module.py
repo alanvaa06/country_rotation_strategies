@@ -300,19 +300,19 @@ def transform_process_data(dataFrames: Dict[str, pd.DataFrame],
         
         # Sales Growth
         if 'PS' in processed_data and 'Fwd_PS' in processed_data:
-            processed_data['consensusSalesGrowth'] = processed_data['PS'] / processed_data['Fwd_PS'] - 1
+            processed_data['ConsensusSalesGrowth'] = processed_data['PS'] / processed_data['Fwd_PS'] - 1
         
         # EBITDA Growth
         if 'EV_EBITDA' in processed_data and 'Fwd_EV_EBITDA' in processed_data:
-            processed_data['consensusEbitdaGrowth'] = processed_data['EV_EBITDA'] / processed_data['Fwd_EV_EBITDA'] - 1
+            processed_data['ConsensusEbitdaGrowth'] = processed_data['EV_EBITDA'] / processed_data['Fwd_EV_EBITDA'] - 1
         
         # Earnings Growth
         if 'PE' in processed_data and 'Fwd_PE' in processed_data:
-            processed_data['consensusEarningsGrowth'] = processed_data['PE'] / processed_data['Fwd_PE'] - 1
+            processed_data['ConsensusEarningsGrowth'] = processed_data['PE'] / processed_data['Fwd_PE'] - 1
         
         # Cash Flow Growth
         if 'PCF' in processed_data and 'Fwd_PCF' in processed_data:
-            processed_data['consensusCashFlowGrowth'] = processed_data['PCF'] / processed_data['Fwd_PCF'] - 1
+            processed_data['ConsensusCashFlowGrowth'] = processed_data['PCF'] / processed_data['Fwd_PCF'] - 1
         
         # ==========================================
         # 4. YIELD CALCULATIONS
@@ -321,17 +321,17 @@ def transform_process_data(dataFrames: Dict[str, pd.DataFrame],
         
         # Earnings Yields
         if 'PE' in processed_data:
-            processed_data['earningsYieldTTM'] = 1 / processed_data['PE']
+            processed_data['EarningsYieldTTM'] = 1 / processed_data['PE']
         
         if 'Fwd_PE' in processed_data:
-            processed_data['earningsYieldFWD'] = 1 / processed_data['Fwd_PE']
+            processed_data['EarningsYieldFWD'] = 1 / processed_data['Fwd_PE']
         
         # Cash Flow Yields
         if 'PCF' in processed_data:
-            processed_data['cashFlowYieldTTM'] = 1 / processed_data['PCF']
+            processed_data['CashFlowYieldTTM'] = 1 / processed_data['PCF']
         
         if 'Fwd_PCF' in processed_data:
-            processed_data['cashFlowYieldFWD'] = 1 / processed_data['Fwd_PCF']
+            processed_data['CashFlowYieldFWD'] = 1 / processed_data['Fwd_PCF']
         
         # ==========================================
         # 5. SPREAD CALCULATIONS (vs 10-Year Bonds)
@@ -340,25 +340,25 @@ def transform_process_data(dataFrames: Dict[str, pd.DataFrame],
         
         if 'Ten_Year' in processed_data:
             # Earnings Yield Spreads
-            if 'earningsYieldTTM' in processed_data:
-                processed_data['earningsYieldTTMSpread'] = processed_data['earningsYieldTTM'].sub(processed_data['Ten_Year'], fill_value=0)
+            if 'EarningsYieldTTM' in processed_data:
+                processed_data['EarningsYieldTTMSpread'] = processed_data['EarningsYieldTTM'].sub(processed_data['Ten_Year'], fill_value=0)
             
-            if 'earningsYieldFWD' in processed_data:
-                processed_data['earningsYieldFWDSpread'] = processed_data['earningsYieldFWD'].sub(processed_data['Ten_Year'], fill_value=0)
+            if 'EarningsYieldFWD' in processed_data:
+                processed_data['EarningsYieldFWDSpread'] = processed_data['EarningsYieldFWD'].sub(processed_data['Ten_Year'], fill_value=0)
             
             # Cash Flow Yield Spreads
-            if 'cashFlowYieldTTM' in processed_data:
-                processed_data['cashFlowYieldTTMSpread'] = processed_data['cashFlowYieldTTM'].sub(processed_data['Ten_Year'], fill_value=0)
+            if 'CashFlowYieldTTM' in processed_data:
+                processed_data['CashFlowYieldTTMSpread'] = processed_data['CashFlowYieldTTM'].sub(processed_data['Ten_Year'], fill_value=0)
             
-            if 'cashFlowYieldFWD' in processed_data:
-                processed_data['cashFlowYieldFWDSpread'] = processed_data['cashFlowYieldFWD'].sub(processed_data['Ten_Year'], fill_value=0)
+            if 'CashFlowYieldFWD' in processed_data:
+                processed_data['CashFlowYieldFWDSpread'] = processed_data['CashFlowYieldFWD'].sub(processed_data['Ten_Year'], fill_value=0)
             
             # Dividend Yield Spreads
             if 'DVD' in processed_data:
-                processed_data['dvdYieldTTMSpread'] = processed_data['DVD'].sub(processed_data['Ten_Year'], fill_value=0)
+                processed_data['DvdYieldTTMSpread'] = processed_data['DVD'].sub(processed_data['Ten_Year'], fill_value=0)
             
             if 'Fwd_DVD' in processed_data:
-                processed_data['dvdYieldFWDSpread'] = processed_data['Fwd_DVD'].sub(processed_data['Ten_Year'], fill_value=0)
+                processed_data['DvdYieldFWDSpread'] = processed_data['Fwd_DVD'].sub(processed_data['Ten_Year'], fill_value=0)
         
         # ==========================================
         # 6. FUNDAMENTAL CALCULATIONS
@@ -367,54 +367,51 @@ def transform_process_data(dataFrames: Dict[str, pd.DataFrame],
         
         # Earnings Calculations
         if 'PE' in processed_data and 'Price' in processed_data:
-            processed_data['earnings'] = (1 / processed_data['PE']) * processed_data['Price']
+            processed_data['Earnings'] = (1 / processed_data['PE']) * processed_data['Price']
         
-        if 'earningsYieldFWD' in processed_data and 'Price' in processed_data:
-            processed_data['fwdEarnings'] = (processed_data['earningsYieldFWD']) * processed_data['Price']
+        if 'EarningsYieldFWD' in processed_data and 'Price' in processed_data:
+            processed_data['FwdEarnings'] = (processed_data['EarningsYieldFWD']) * processed_data['Price']
         
-        # Revenue Calculations
-        if 'PS' in processed_data and 'Price' in processed_data:
-            processed_data['revenue'] = (1 / processed_data['PS']) * processed_data['Price']
         
         if 'Fwd_PS' in processed_data and 'Price' in processed_data:
-            processed_data['fwdRevenue'] = (1 / processed_data['Fwd_PS']) * processed_data['Price']
+            processed_data['FwdRevenue'] = (1 / processed_data['Fwd_PS']) * processed_data['Price']
         
         # EBITDA Calculations
         if 'Fwd_EV_EBITDA' in processed_data and 'EV' in processed_data:
-            processed_data['fwdEBITDA'] = (1 / processed_data['Fwd_EV_EBITDA']) * processed_data['EV']
+            processed_data['FwdEBITDA'] = (1 / processed_data['Fwd_EV_EBITDA']) * processed_data['EV']
         
         # Cash Flow Calculations
         if 'PCF' in processed_data and 'Price' in processed_data:
             processed_data['CF'] = (1 / processed_data['PCF']) * processed_data['Price']
         
         if 'Fwd_PCF' in processed_data and 'Price' in processed_data:
-            processed_data['fwdCF'] = (1 / processed_data['Fwd_PCF']) * processed_data['Price']
+            processed_data['FwdCF'] = (1 / processed_data['Fwd_PCF']) * processed_data['Price']
         
         # ==========================================
         # 7. MARGIN CALCULATIONS
         # ==========================================
         print("Step 7: Computing margin metrics...")
         
-        if 'revenue' in processed_data:
+        if 'Revenue' in processed_data:
             # EBIT Margin
             if 'EBIT' in processed_data:
-                processed_data['ebitMargin'] = processed_data['EBIT'] / processed_data['revenue']
+                processed_data['EbitMargin'] = processed_data['EBIT'] / processed_data['Revenue']
             
             # EBITDA Margin
             if 'EBITDA' in processed_data:
-                processed_data['ebitdaMargin'] = processed_data['EBITDA'] / processed_data['revenue']
+                processed_data['EbitdaMargin'] = processed_data['EBITDA'] / processed_data['Revenue']
             
             # Net Margin
-            if 'earnings' in processed_data:
-                processed_data['netMargin'] = processed_data['earnings'] / processed_data['revenue']
+            if 'Earnings' in processed_data:
+                processed_data['NetMargin'] = processed_data['Earnings'] / processed_data['Revenue']
             
             # Forward EBITDA Margin
-            if 'fwdEBITDA' in processed_data:
-                processed_data['fwdEBITDAMargin'] = processed_data['fwdEBITDA'] / processed_data['revenue']
+            if 'FwdEBITDA' in processed_data:
+                processed_data['FwdEBITDAMargin'] = processed_data['FwdEBITDA'] / processed_data['Revenue']
             
             # Forward Net Margin
-            if 'fwdEarnings' in processed_data:
-                processed_data['fwdNetMargin'] = processed_data['fwdEarnings'] / processed_data['revenue']
+            if 'FwdEarnings' in processed_data:
+                processed_data['FwdNetMargin'] = processed_data['FwdEarnings'] / processed_data['Revenue']
         
         # ==========================================
         # 8. ROLLING STATISTICS
@@ -422,19 +419,19 @@ def transform_process_data(dataFrames: Dict[str, pd.DataFrame],
         print("Step 8: Computing rolling statistics...")
         
         # Rolling Earnings Growth (3-month average of quarterly growth)
-        if 'earnings' in processed_data:
-            processed_data['rollingEarnings'] = processed_data['earnings'].pct_change(63).rolling(21).mean()
+        if 'Earnings' in processed_data:
+            processed_data['RollingEarnings'] = processed_data['Earnings'].pct_change(63).rolling(21).mean()
         
-        if 'fwdEarnings' in processed_data:
-            processed_data['fwdRollingEarnings'] = processed_data['fwdEarnings'].pct_change(63).rolling(21).mean()
+        if 'FwdEarnings' in processed_data:
+            processed_data['FwdRollingEarnings'] = processed_data['FwdEarnings'].pct_change(63).rolling(21).mean()
         
         # Rolling Volatility (3-month, annualized)
         if 'Price' in processed_data:
-            processed_data['rollingVol'] = processed_data['Price'].pct_change().rolling(63).std() * np.sqrt(252)
+            processed_data['RollingVol'] = processed_data['Price'].pct_change().rolling(63).std() * np.sqrt(252)
         
         # Cumulative Flows (3-month sum)
         if 'Flows' in processed_data:
-            processed_data['cumFlow'] = processed_data['Flows'].rolling(63).sum()
+            processed_data['CumFlow'] = processed_data['Flows'].rolling(63).sum()
         
         # ==========================================
         # 9. BALANCE SHEET METRICS
@@ -443,7 +440,7 @@ def transform_process_data(dataFrames: Dict[str, pd.DataFrame],
         
         # Assets to Equity Ratio
         if 'Assets' in processed_data and 'Equity' in processed_data:
-            processed_data['assetsEquity'] = processed_data['Assets'] / processed_data['Equity']
+            processed_data['AssetsEquity'] = processed_data['Assets'] / processed_data['Equity']
         
         # ==========================================
         # 10. EXPORT TO FILES
