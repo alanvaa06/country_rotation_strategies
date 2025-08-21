@@ -246,20 +246,20 @@ class CountryFactorSelectionFramework:
             'EV_EBIT': 'Valuation',
             'EV_EBITDA': 'Valuation',
             'Fwd_EV_EBITDA': 'Valuation',
-            'earningsYieldTTM': 'Valuation',
-            'earningsYieldFWD': 'Valuation',
-            'cashFlowYieldTTM': 'Valuation',
-            'cashFlowYieldFWD': 'Valuation',
+            'EarningsYieldTTM': 'Valuation',
+            'EarningsYieldFWD': 'Valuation',
+            'CashFlowYieldTTM': 'Valuation',
+            'CashFlowYieldFWD': 'Valuation',
             'DVD': 'Valuation',
             'Fwd_DVD': 'Valuation',
             
             # VALUATION SPREADS (Risk Premium)
-            'earningsYieldTTMSpread': 'Valuation',
-            'earningsYieldFWDSpread': 'Valuation',
-            'cashFlowYieldTTMSpread': 'Valuation',
-            'cashFlowYieldFWDSpread': 'Valuation',
-            'dvdYieldTTMSpread': 'Valuation',
-            'dvdYieldFWDSpread': 'Valuation',
+            'EarningsYieldTTMSpread': 'Valuation',
+            'EarningsYieldFWDSpread': 'Valuation',
+            'CashFlowYieldTTMSpread': 'Valuation',
+            'CashFlowYieldFWDSpread': 'Valuation',
+            'DvdYieldTTMSpread': 'Valuation',
+            'DvdYieldFWDSpread': 'Valuation',
             
             # QUALITY FACTORS
             'ROE': 'Quality',
@@ -267,47 +267,46 @@ class CountryFactorSelectionFramework:
             'Return_Capital': 'Quality',
             'Debt_to_Equity': 'Quality',
             'Net_Debt_Ebitda': 'Quality',
-            'assetsEquity': 'Quality',
+            'AssetsEquity': 'Quality',
             'Assets': 'Quality',
             'Debt': 'Quality',
             'Equity': 'Quality',
             'Liabilities': 'Quality',
             'CF': 'Quality',
-            'fwdCF': 'Quality',
+            'FwdCF': 'Quality',
             
             # PROFITABILITY FACTORS
-            'ebitMargin': 'Profitability',
-            'ebitdaMargin': 'Profitability', 
-            'netMargin': 'Profitability',
-            'fwdEBITDAMargin': 'Profitability',
-            'fwdNetMargin': 'Profitability',
+            'EbitMargin': 'Profitability',
+            'EbitdaMargin': 'Profitability', 
+            'NetMargin': 'Profitability',
+            'FwdEBITDAMargin': 'Profitability',
+            'FwdNetMargin': 'Profitability',
             'EBIT': 'Profitability',
             'EBITDA': 'Profitability',
-            'fwdEBITDA': 'Profitability',
+            'FwdEBITDA': 'Profitability',
             'EPS': 'Profitability',
-            'earnings': 'Profitability',
-            'fwdEarnings': 'Profitability',
+            'Earnings': 'Profitability',
+            'FwdEarnings': 'Profitability',
             
             # MOMENTUM FACTORS  
-            'consensusSalesGrowth': 'Momentum',
-            'consensusEbitdaGrowth': 'Momentum',
-            'consensusEarningsGrowth': 'Momentum', 
-            'consensusCashFlowGrowth': 'Momentum',
-            'rollingEarnings': 'Momentum',
-            'fwdRollingEarnings': 'Momentum',
-            'cumFlow': 'Momentum',
+            'ConsensusSalesGrowth': 'Momentum',
+            'ConsensusEbitdaGrowth': 'Momentum',
+            'ConsensusEarningsGrowth': 'Momentum', 
+            'ConsensusCashFlowGrowth': 'Momentum',
+            'RollingEarnings': 'Momentum',
+            'FwdRollingEarnings': 'Momentum',
+            'CumFlow': 'Momentum',
             'Flows': 'Momentum',
             
             # SIZE FACTORS
             'Market_Cap': 'Size',
             'EV': 'Size',
             'Revenue': 'Size',
-            'revenue': 'Size',
-            'fwdRevenue': 'Size',
+            'FwdRevenue': 'Size',
             'Price': 'Size',
             
             # RISK FACTORS
-            'rollingVol': 'Risk',
+            'RollingVol': 'Risk',
             'Ten_Year': 'Risk',
             
             # SENTIMENT FACTORS
@@ -1401,7 +1400,7 @@ selected_factors = results['final_factors']
 final_matrix = framework.create_final_factor_matrix(dataFrames, selected_factors)
 
 # Plot final correlation matrix
-framework.plot_correlation_heatmap(results['correlation_matrix'])
+framework.plot_correlation_heatmap(results['correlation_matrix'], selected_factors)
 
 # Export selected factors
 export_selected_factors_data(dataFrames, selected_factors, 'SelectedFactors')
@@ -1415,3 +1414,6 @@ validation = validate_factor_selection(
 # Generate comprehensive report
 create_factor_analysis_report(results, 'factor_analysis_report.txt')
 
+#%%
+
+final_matrix
