@@ -1,0 +1,45 @@
+name: country_rotation
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Python version
+  - python>=3.8,<3.12
+  
+  # Core data manipulation and analysis
+  - pandas>=1.5.0
+  - numpy>=1.21.0
+  
+  # Statistical and scientific computing
+  - scipy>=1.9.0
+  - statsmodels>=0.13.0
+  
+  # Machine learning and preprocessing
+  - scikit-learn>=1.1.0
+  
+  # Visualization
+  - matplotlib>=3.5.0
+  - seaborn>=0.11.0
+  
+  # Excel file handling
+  - openpyxl>=3.0.0
+  - xlrd>=2.0.0
+  
+  # Development tools (optional)
+  - jupyter
+  - ipykernel
+  - notebook
+  
+  # Additional packages via pip
+  - pip
+  - pip:
+    - typing-extensions>=4.0.0
+    
+# To create this environment, run:
+# conda env create -f environment.yml
+# 
+# To activate the environment:
+# conda activate country_rotation
+#
+# To update the environment:
+# conda env update -f environment.yml --prune

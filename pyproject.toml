@@ -1,0 +1,205 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "country-rotation-strategy"
+version = "1.0.0"
+description = "Quantitative country rotation strategy using financial and economic data"
+authors = [
+    {name = "Alan Vazquez", email = "your.email@example.com"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+keywords = ["finance", "quantitative", "country-rotation", "strategy", "factor-analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+dependencies = [
+    # Core data manipulation and analysis
+    "pandas>=1.5.0",
+    "numpy>=1.21.0",
+    
+    # Statistical and scientific computing
+    "scipy>=1.9.0",
+    "statsmodels>=0.13.0",
+    
+    # Machine learning and data preprocessing
+    "scikit-learn>=1.1.0",
+    
+    # Visualization
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+    
+    # Excel file handling
+    "openpyxl>=3.0.0",
+    "xlrd>=2.0.0",
+    
+    # Type hints support (for older Python versions)
+    "typing-extensions>=4.0.0; python_version<'3.10'",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Development tools
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "flake8>=5.0.0",
+    "mypy>=0.991",
+    
+    # Jupyter notebook support
+    "jupyter>=1.0.0",
+    "ipykernel>=6.0.0",
+    "nbformat>=5.0.0",
+]
+
+analysis = [
+    # Enhanced analysis tools
+    "plotly>=5.0.0",
+    "bokeh>=2.4.0",
+    "dash>=2.0.0",
+    "streamlit>=1.20.0",
+    
+    # Additional statistical packages
+    "arch>=5.0.0",          # Financial econometrics
+    "pyfolio>=0.9.0",       # Portfolio analysis
+    "empyrical>=0.5.0",     # Financial metrics
+    "quantlib>=1.29",       # Quantitative finance library
+]
+
+performance = [
+    # Performance optimization
+    "numba>=0.56.0",        # JIT compilation
+    "cython>=0.29.0",       # C extensions
+    "joblib>=1.2.0",        # Parallel computing
+    "dask>=2022.0.0",       # Parallel arrays and dataframes
+]
+
+data = [
+    # Additional data sources
+    "yfinance>=0.2.0",      # Yahoo Finance data
+    "quandl>=3.7.0",        # Quandl financial data
+    "alpha-vantage>=2.3.0", # Alpha Vantage API
+    "fredapi>=0.5.0",       # FRED economic data
+    "bloomberg>=1.0.0",     # Bloomberg API (if available)
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/country-rotation-strategy"
+Documentation = "https://github.com/yourusername/country-rotation-strategy/wiki"
+Repository = "https://github.com/yourusername/country-rotation-strategy.git"
+"Bug Tracker" = "https://github.com/yourusername/country-rotation-strategy/issues"
+
+[project.scripts]
+country-rotation = "strategy:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*.py"]
+
+[tool.setuptools.package-data]
+"*" = ["*.xlsx", "*.csv", "*.json"]
+
+# Black code formatting
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+# isort import sorting
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 100
+known_first_party = ["strategy", "function_module"]
+
+# MyPy type checking
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = [
+    "tests",
+]
+python_files = [
+    "test_*.py",
+    "*_test.py",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/env/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\(Protocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+# Anaconda/Conda environment configuration
+[tool.conda-lock]
+channels = [
+    "conda-forge",
+    "defaults",
+]
+
+[tool.conda-lock.dependencies]
+python = ">=3.8,<3.12"
+pandas = ">=1.5.0"
+numpy = ">=1.21.0"
+scipy = ">=1.9.0"
+matplotlib = ">=3.5.0"
+seaborn = ">=0.11.0"
+scikit-learn = ">=1.1.0"
+statsmodels = ">=0.13.0"
+openpyxl = ">=3.0.0"
