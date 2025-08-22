@@ -265,13 +265,9 @@ class CountryFactorSelectionFramework:
             'DvdYieldFWDSpread': 'Valuation',
             
             # QUALITY FACTORS
-            'ROE': 'Quality',
-            'Fwd_ROE': 'Quality',
-            'Return_Capital': 'Quality',
             'Debt_to_Equity': 'Quality',
             'Net_Debt_Ebitda': 'Quality',
             'AssetsEquity': 'Quality',
-            'Assets': 'Quality',
             'Debt': 'Quality',
             'Equity': 'Quality',
             'Liabilities': 'Quality',
@@ -290,6 +286,9 @@ class CountryFactorSelectionFramework:
             'EPS': 'Profitability',
             'Earnings': 'Profitability',
             'FwdEarnings': 'Profitability',
+            'ROE': 'Profitability',
+            'Fwd_ROE': 'Profitability',
+            'Return_Capital': 'Profitability',
             
             # MOMENTUM FACTORS  
             'ConsensusSalesGrowth': 'Momentum',
@@ -307,6 +306,7 @@ class CountryFactorSelectionFramework:
             'Revenue': 'Size',
             'FwdRevenue': 'Size',
             'Price': 'Size',
+            'Assets': 'Size',
             
             # RISK FACTORS
             'RollingVol': 'Risk',
@@ -1681,11 +1681,9 @@ directionality_report = framework.get_directionality_report()
 # Get selected factors
 selected_factors = results['final_factors']
 
-#%%
-
 directionality_corrected_dataFrames =  results['corrected_dataframes']
 
-#%%
+
 # Create final modeling matrix
 final_matrix = framework.create_final_factor_matrix(directionality_corrected_dataFrames, selected_factors)
 
@@ -1707,26 +1705,23 @@ validation = validate_factor_selection(
 create_factor_analysis_report(results, 'factor_analysis_report.txt')
 
 
-#%%
-
 classification_map= results['classification_map']
 
 
 #%%
 
-class EqualWeightedComposites:
+class CategorySignalGenerator:
     """
-    A class to implement Equal-Weighted Composites methodology for combining
-    multiple investment factors into category-specific signals and a final alpha signal.
+    A class to create category-specific composite signals from multiple investment factors.
     
     This class creates composite signals for each factor category by calculating
     the mean of z-scores, then re-standardizes these signals cross-sectionally
-    for each date, and finally combines them into a single alpha signal.
+    for each date.
     """
     
     def __init__(self, data: pd.DataFrame, classification_map: Dict[str, str]):
         """
-        Initialize the EqualWeightedComposites class.
+        Initialize the CategorySignalGenerator class.
         
         Parameters:
         -----------
@@ -1744,7 +1739,6 @@ class EqualWeightedComposites:
         self.category_to_factors = self._convert_classification_map()
         
         self.category_signals = {}
-        self.final_alpha_signal = None
         
         # Validate inputs
         self._validate_inputs()
@@ -1806,6 +1800,32 @@ class EqualWeightedComposites:
         # Update category_to_factors to only include factors that exist in data
         self._filter_category_to_factors(data_factors)
     
+    def _filter_category_to_factors(self, data_factors: set):
+        """
+        Filter category_to_factors to only include factors that exist in the data.
+        
+        Parameters:
+        -----------
+        data_factors : set
+            Set of factor names that exist in the data
+        """
+        filtered_category_to_factors = {}
+        
+        for category, factors in self.category_to_factors.items():
+            # Only keep factors that exist in the data
+            existing_factors = [f for f in factors if f in data_factors]
+            
+            if existing_factors:  # Only keep categories that have at least one factor
+                filtered_category_to_factors[category] = existing_factors
+            else:
+                print(f"Warning: Category '{category}' has no factors in the data - will be excluded")
+        
+        self.category_to_factors = filtered_category_to_factors
+        
+        print(f"After filtering:")
+        for category, factors in self.category_to_factors.items():
+            print(f"  - {category}: {len(factors)} factors")
+    
     def create_category_signals(self) -> Dict[str, pd.DataFrame]:
         """
         Create composite signals for each category by calculating the mean of factor z-scores.
@@ -1815,7 +1835,7 @@ class EqualWeightedComposites:
         Returns:
         --------
         Dict[str, pd.DataFrame] : Dictionary with category names as keys and 
-                                  composite signals as values
+                                  composite signals as values (in panel format)
         """
         print("Creating category composite signals...")
         
@@ -1919,61 +1939,16 @@ class EqualWeightedComposites:
         
         return restandardized_signals
     
-    def create_final_alpha_signal(self) -> pd.DataFrame:
+    def generate_category_signals(self) -> Dict[str, pd.DataFrame]:
         """
-        Create final alpha signal by averaging the re-standardized category signals.
+        Run the complete category signal generation pipeline.
         
         Returns:
         --------
-        pd.DataFrame : Final alpha signal for each country across time
-        """
-        print("Creating final alpha signal...")
-        
-        if not self.category_signals:
-            raise ValueError("No category signals available. Run create_category_signals() first.")
-        
-        # Combine all category signals - they're already in panel format
-        # Just concatenate them with a multi-level column structure
-        combined_signals = pd.concat(self.category_signals.values(), axis=1, keys=self.category_signals.keys())
-        
-        # Calculate equal-weighted average of category signals
-        final_alpha = combined_signals.mean(axis=1, skipna=True)
-        
-        # Convert to panel format DataFrame
-        self.final_alpha_signal = final_alpha.to_frame(name='Alpha_Signal')
-        
-        # Get countries from the category signals for consistent formatting
-        if self.category_signals:
-            sample_signal = list(self.category_signals.values())[0]
-            countries = sample_signal.columns.tolist()
-            
-            # Expand final alpha to have same countries as columns (broadcasting)
-            final_alpha_panel = pd.DataFrame(index=final_alpha.index, columns=countries)
-            for country in countries:
-                final_alpha_panel[country] = final_alpha.values
-                
-            self.final_alpha_signal = final_alpha_panel
-        
-        print(f"Final alpha signal created:")
-        print(f"  - Panel shape: {self.final_alpha_signal.shape} (dates x countries)")
-        print(f"  - Signal range: [{final_alpha.min():.4f}, {final_alpha.max():.4f}]")
-        print(f"  - Signal mean: {final_alpha.mean():.4f}")
-        print(f"  - Signal std: {final_alpha.std():.4f}")
-        
-        return self.final_alpha_signal
-    
-    def run_full_pipeline(self) -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
-        """
-        Run the complete Equal-Weighted Composites pipeline.
-        
-        Returns:
-        --------
-        Tuple containing:
-        - Dict[str, pd.DataFrame] : Category signals (restandardized)
-        - pd.DataFrame : Final alpha signal
+        Dict[str, pd.DataFrame] : Category signals (restandardized) in panel format
         """
         print("="*60)
-        print("RUNNING EQUAL-WEIGHTED COMPOSITES PIPELINE")
+        print("GENERATING CATEGORY SIGNALS")
         print("="*60)
         
         # Step 1: Create category signals
@@ -1982,90 +1957,15 @@ class EqualWeightedComposites:
         # Step 2: Re-standardize category signals
         self.restandardize_category_signals()
         
-        # Step 3: Create final alpha signal
-        self.create_final_alpha_signal()
-        
         print("="*60)
-        print("PIPELINE COMPLETED SUCCESSFULLY")
+        print("CATEGORY SIGNAL GENERATION COMPLETED")
         print("="*60)
         
-        return self.category_signals, self.final_alpha_signal
-    
-    def get_signal_statistics(self) -> pd.DataFrame:
-        """
-        Get summary statistics for all signals.
-        
-        Returns:
-        --------
-        pd.DataFrame : Summary statistics for category and final alpha signals
-        """
-        stats_list = []
-        
-        # Category signals statistics
-        for category_name, signal_df in self.category_signals.items():
-            # For panel format, stack to get all values
-            signal_values = signal_df.stack().dropna()
-            stats = {
-                'Signal': category_name,
-                'Type': 'Category',
-                'Count': len(signal_values),
-                'Mean': signal_values.mean(),
-                'Std': signal_values.std(),
-                'Min': signal_values.min(),
-                'Max': signal_values.max(),
-                'Skewness': signal_values.skew(),
-                'Kurtosis': signal_values.kurtosis()
-            }
-            stats_list.append(stats)
-        
-        # Final alpha signal statistics
-        if self.final_alpha_signal is not None:
-            # For panel format, stack to get all values
-            alpha_values = self.final_alpha_signal.stack().dropna()
-            stats = {
-                'Signal': 'Alpha_Signal',
-                'Type': 'Final',
-                'Count': len(alpha_values),
-                'Mean': alpha_values.mean(),
-                'Std': alpha_values.std(),
-                'Min': alpha_values.min(),
-                'Max': alpha_values.max(),
-                'Skewness': alpha_values.skew(),
-                'Kurtosis': alpha_values.kurtosis()
-            }
-            stats_list.append(stats)
-        
-        return pd.DataFrame(stats_list).round(4)
-    
-    def _filter_category_to_factors(self, data_factors: set):
-        """
-        Filter category_to_factors to only include factors that exist in the data.
-        
-        Parameters:
-        -----------
-        data_factors : set
-            Set of factor names that exist in the data
-        """
-        filtered_category_to_factors = {}
-        
-        for category, factors in self.category_to_factors.items():
-            # Only keep factors that exist in the data
-            existing_factors = [f for f in factors if f in data_factors]
-            
-            if existing_factors:  # Only keep categories that have at least one factor
-                filtered_category_to_factors[category] = existing_factors
-            else:
-                print(f"Warning: Category '{category}' has no factors in the data - will be excluded")
-        
-        self.category_to_factors = filtered_category_to_factors
-        
-        print(f"After filtering:")
-        for category, factors in self.category_to_factors.items():
-            print(f"  - {category}: {len(factors)} factors")
+        return self.category_signals
     
     def get_category_breakdown(self) -> pd.DataFrame:
         """
-        Get a breakdown of factors by category.
+        Get a breakdown of factors by category (only factors available in data).
         
         Returns:
         --------
@@ -2080,6 +1980,8 @@ class EqualWeightedComposites:
                     'Category': category
                 })
         
+        return pd.DataFrame(breakdown_list).sort_values(['Category', 'Factor'])
+    
     def get_all_factors_breakdown(self) -> pd.DataFrame:
         """
         Get a breakdown showing all factors from classification_map and their status.
@@ -2101,31 +2003,134 @@ class EqualWeightedComposites:
         
         return pd.DataFrame(breakdown_list).sort_values(['Category', 'Status', 'Factor'])
     
-    def calculate_category_contributions(self) -> Dict[str, pd.DataFrame]:
+    def get_signal_statistics(self) -> pd.DataFrame:
         """
-        Calculate how much each category contributes to the final alpha signal.
-        
-        Since the final alpha is an equal-weighted average of category signals,
-        each category contributes 1/N of its signal value to the final alpha.
+        Get summary statistics for category signals.
         
         Returns:
         --------
-        Dict containing:
-        - 'contributions': DataFrame with category contributions in panel format
-        - 'contribution_stats': DataFrame with summary statistics of contributions
-        - 'relative_importance': DataFrame with relative importance metrics
+        pd.DataFrame : Summary statistics for category signals
         """
         if not self.category_signals:
-            raise ValueError("No category signals available. Run the pipeline first.")
+            raise ValueError("No category signals available. Run generate_category_signals() first.")
+        
+        stats_list = []
+        
+        # Category signals statistics
+        for category_name, signal_df in self.category_signals.items():
+            # For panel format, stack to get all values
+            signal_values = signal_df.stack().dropna()
+            stats = {
+                'Signal': category_name,
+                'Count': len(signal_values),
+                'Mean': signal_values.mean(),
+                'Std': signal_values.std(),
+                'Min': signal_values.min(),
+                'Max': signal_values.max(),
+                'Skewness': signal_values.skew(),
+                'Kurtosis': signal_values.kurtosis()
+            }
+            stats_list.append(stats)
+        
+        return pd.DataFrame(stats_list).round(4)
+
+
+class AlphaSignalGenerator:
+    """
+    A class to create final alpha signals from category signals.
+    """
+    
+    def __init__(self, category_signals: Dict[str, pd.DataFrame]):
+        """
+        Initialize with category signals.
+        
+        Parameters:
+        -----------
+        category_signals : Dict[str, pd.DataFrame]
+            Dictionary of category signals in panel format
+        """
+        self.category_signals = category_signals.copy()
+        self.final_alpha_signal = None
+        
+    def create_final_alpha_signal(self, method: str = 'equal_weighted') -> pd.DataFrame:
+        """
+        Create final alpha signal by combining category signals.
+        
+        Parameters:
+        -----------
+        method : str
+            Method to combine signals ('equal_weighted', 'weighted', etc.)
             
+        Returns:
+        --------
+        pd.DataFrame : Final alpha signal in panel format
+        """
+        print("Creating final alpha signal...")
+        
+        if not self.category_signals:
+            raise ValueError("No category signals available.")
+        
+        if method == 'equal_weighted':
+            # Combine all category signals with equal weights
+            combined_signals = pd.concat(self.category_signals.values(), axis=1, 
+                                       keys=self.category_signals.keys())
+            
+            # Calculate equal-weighted average of category signals
+            final_alpha = combined_signals.mean(axis=1, skipna=True)
+            
+            # Get countries from the category signals for consistent formatting
+            sample_signal = list(self.category_signals.values())[0]
+            countries = sample_signal.columns.tolist()
+            
+            # Expand final alpha to have same countries as columns (broadcasting)
+            final_alpha_panel = pd.DataFrame(index=final_alpha.index, columns=countries)
+            for country in countries:
+                final_alpha_panel[country] = final_alpha.values
+                
+            self.final_alpha_signal = final_alpha_panel
+        
+        else:
+            raise ValueError(f"Method '{method}' not implemented yet.")
+        
+        print(f"Final alpha signal created:")
+        print(f"  - Panel shape: {self.final_alpha_signal.shape} (dates x countries)")
+        print(f"  - Signal range: [{final_alpha.min():.4f}, {final_alpha.max():.4f}]")
+        print(f"  - Signal mean: {final_alpha.mean():.4f}")
+        print(f"  - Signal std: {final_alpha.std():.4f}")
+        
+        return self.final_alpha_signal
+
+
+class SignalAnalyzer:
+    """
+    A class for analyzing and visualizing signals and their contributions.
+    """
+    
+    def __init__(self, category_signals: Dict[str, pd.DataFrame], 
+                 final_alpha_signal: pd.DataFrame = None):
+        """
+        Initialize with signals.
+        
+        Parameters:
+        -----------
+        category_signals : Dict[str, pd.DataFrame]
+            Dictionary of category signals in panel format
+        final_alpha_signal : pd.DataFrame, optional
+            Final alpha signal in panel format
+        """
+        self.category_signals = category_signals.copy()
+        self.final_alpha_signal = final_alpha_signal
+        
+    def calculate_category_contributions(self) -> Dict[str, pd.DataFrame]:
+        """
+        Calculate how much each category contributes to the final alpha signal.
+        """
         if self.final_alpha_signal is None:
-            raise ValueError("No final alpha signal available. Run create_final_alpha_signal() first.")
+            raise ValueError("No final alpha signal available.")
         
         print("Calculating category contributions to final alpha signal...")
         
-        # Number of categories
         n_categories = len(self.category_signals)
-        
         # Calculate individual contributions (each category contributes 1/N of its value)
         contributions = {}
         
@@ -2134,19 +2139,17 @@ class EqualWeightedComposites:
             contribution = signal_df / n_categories
             contributions[category_name.replace('_Signal', '_Contribution')] = contribution
         
-        # Create a combined contributions DataFrame
+        # Calculate statistics and verification
         contributions_df = pd.concat(contributions.values(), axis=1, keys=contributions.keys())
-        
+
         # Verify that contributions sum to final alpha (within rounding error)
         reconstructed_alpha = pd.concat(contributions.values(), axis=1).sum(axis=1)
         
-        # Calculate contribution statistics
+         # Calculate contribution statistics
         contribution_stats = []
-        
         for contrib_name, contrib_df in contributions.items():
             # Stack to get all values for statistics
             contrib_values = contrib_df.stack().dropna()
-            
             if len(contrib_values) > 0:
                 stats = {
                     'Category': contrib_name.replace('_Contribution', ''),
@@ -2155,12 +2158,12 @@ class EqualWeightedComposites:
                     'Min_Contribution': contrib_values.min(),
                     'Max_Contribution': contrib_values.max(),
                     'Abs_Mean_Contribution': contrib_values.abs().mean(),
-                    'Weight_in_Final': 1/n_categories  # Equal weighted
+                    'Weight_in_Final': 1/n_categories # Equal weighted
                 }
                 contribution_stats.append(stats)
         
         contribution_stats_df = pd.DataFrame(contribution_stats).round(4)
-        
+
         # Calculate relative importance metrics
         importance_metrics = []
         
@@ -2197,7 +2200,7 @@ class EqualWeightedComposites:
                 importance_metrics.append(importance)
         
         importance_df = pd.DataFrame(importance_metrics).round(4)
-        
+
         # Verification
         alpha_reconstruction_error = (reconstructed_alpha - self.final_alpha_signal.iloc[:, 0]).abs().mean()
         
@@ -2213,7 +2216,7 @@ class EqualWeightedComposites:
             'relative_importance': importance_df,
             'reconstruction_error': alpha_reconstruction_error
         }
-    
+
     def plot_category_contributions(self, date_range=None, countries=None, figsize=(15, 10)):
         """
         Plot category contributions over time and across countries.
@@ -2320,21 +2323,15 @@ class EqualWeightedComposites:
         plt.show()
         
         return contributions_analysis
-    
+
     def plot_signal_distributions(self, figsize=(15, 10)):
         """
-        Plot distributions of category signals and final alpha signal.
-        
-        Parameters:
-        -----------
-        figsize : tuple, optional
-            Figure size for the plots
+        Plot distributions of category signals and optionally final alpha signal.
         """
         try:
             import matplotlib.pyplot as plt
-            import seaborn as sns
         except ImportError:
-            print("matplotlib and seaborn are required for plotting")
+            print("matplotlib is required for plotting")
             return
         
         n_signals = len(self.category_signals) + (1 if self.final_alpha_signal is not None else 0)
@@ -2354,7 +2351,6 @@ class EqualWeightedComposites:
             row_idx = plot_idx // n_cols
             col_idx = plot_idx % n_cols
             
-            # For panel format, stack to get all values
             signal_values = signal_df.stack().dropna()
             
             if n_rows > 1:
@@ -2375,7 +2371,6 @@ class EqualWeightedComposites:
             row_idx = plot_idx // n_cols
             col_idx = plot_idx % n_cols
             
-            # For panel format, stack to get all values
             alpha_values = self.final_alpha_signal.stack().dropna()
             
             if n_rows > 1:
@@ -2393,20 +2388,49 @@ class EqualWeightedComposites:
         plt.show()
 
 
-#%%
-# Example usage:
+# Usage example:
+"""
+# Step 1: Generate category signals only
+category_generator = CategorySignalGenerator(data=your_data, 
+                                           classification_map=classification_map)
+category_signals = category_generator.generate_category_signals()
 
-# Initialize and run the pipeline
-ewc = EqualWeightedComposites(
+# Step 2: Optionally create final alpha signal
+alpha_generator = AlphaSignalGenerator(category_signals)
+final_alpha = alpha_generator.create_final_alpha_signal(method='equal_weighted')
+
+# Step 3: Analyze and visualize
+analyzer = SignalAnalyzer(category_signals, final_alpha)
+analyzer.plot_signal_distributions()
+contributions = analyzer.calculate_category_contributions()
+"""
+
+#%%
+
+# Initialize and run category generator
+category_generator = CategorySignalGenerator(
     data=final_matrix,
     classification_map=classification_map
 )
 
-# Run the complete pipeline
-category_signals, final_alpha = ewc.run_full_pipeline()
+# Run the complete category signals
+category_signals = category_generator.generate_category_signals()
 
-# Calculate contributions
-contributions_analysis = ewc.calculate_category_contributions()
+# Get statistics
+stats_df = category_generator.get_signal_statistics()
+print(stats_df)
+
+#%%
+
+#Create final alpha signal
+alpha_generator = AlphaSignalGenerator(category_signals)
+final_alpha = alpha_generator.create_final_alpha_signal(method='equal_weighted')
+
+#%%
+
+#: Analyze and visualize
+analyzer = SignalAnalyzer(category_signals, final_alpha)
+contributions_analysis = analyzer.calculate_category_contributions()
 
 # View contribution statistics
 print("Contribution Statistics:")
@@ -2415,34 +2439,16 @@ print(contributions_analysis['contribution_stats'])
 print("\nRelative Importance:")
 print(contributions_analysis['relative_importance'])
 
-# Get individual category contributions (in panel format)
-valuation_contribution = contributions_analysis['contributions']['Valuation_Contribution']
-momentum_contribution = contributions_analysis['contributions']['Momentum_Contribution']
-
 # Plot comprehensive analysis
-ewc.plot_category_contributions()
+analyzer.plot_category_contributions()
 
 # Plot for specific period/countries
-ewc.plot_category_contributions(
+analyzer.plot_category_contributions(
     date_range=('2020-01-01', '2024-01-01'),
-    countries=['United States', 'Germany', 'Japan']
+    countries=['Japan']
 )
 
-# Get statistics
-stats_df = composite_generator.get_signal_statistics()
-print(stats_df)
 
 # Plot distributions (optional, requires matplotlib)
-ewc.plot_signal_distributions()
+analyzer.plot_signal_distributions()
 
-# Access individual signals
-valuation_signal = category_signals['Valuation_Signal']
-final_alpha_signal = final_alpha
-
-#%%
-
-# Plot for specific period/countries
-ewc.plot_category_contributions(
-    date_range=('2020-01-01', '2024-01-01'),
-    countries=['United States']
-)
