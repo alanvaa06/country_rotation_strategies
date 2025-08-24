@@ -22,3 +22,4 @@ xlrd>=2.0.0
 
 # Type hints support for older Python versions
 typing-extensions>=4.0.0; python_version<"3.10"
+
