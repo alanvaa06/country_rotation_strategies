@@ -197,11 +197,6 @@ fm.explore_data(dataFrames, regions_dict)
 
 #%%
 
-import pandas as pd
-import numpy as np
-from typing import Dict, Any, Tuple, Optional
-import warnings
-
 
 class QuantMetricsTransformer:
     """
@@ -452,7 +447,7 @@ class QuantMetricsTransformer:
     def _process_absolute(self, metric_name: str, df: pd.DataFrame, factor_category: str, slice_days: int) -> None:
         """Process metrics with absolute transformation (no change)."""
         # For absolute metrics, just slice the original data
-        df_sliced = df.iloc[-slice_days:].copy() if len(df) >= slice_days else df.copy()
+        df_sliced = df.iloc[slice_days:].copy() if len(df) >= slice_days else df.copy()
         self.transformed_dataframes[metric_name] = df_sliced
         self.new_classification_map[metric_name] = factor_category
         self.transform_stats['absolute'] += 1
@@ -464,7 +459,7 @@ class QuantMetricsTransformer:
         metric_1mo = f"{metric_name}_1mo_pct_chg"
         df_1mo_full = df.pct_change(periods=self.ONE_MONTH_DAYS) * 100
         # Then slice
-        df_1mo = df_1mo_full.iloc[-slice_days:].copy() if len(df_1mo_full) >= slice_days else df_1mo_full.copy()
+        df_1mo = df_1mo_full.iloc[slice_days:].copy() if len(df_1mo_full) >= slice_days else df_1mo_full.copy()
         self.transformed_dataframes[metric_1mo] = df_1mo
         self.new_classification_map[metric_1mo] = factor_category
 
@@ -472,7 +467,7 @@ class QuantMetricsTransformer:
         metric_3mo = f"{metric_name}_3mo_pct_chg"
         df_3mo_full = df.pct_change(periods=self.THREE_MONTH_DAYS) * 100
         # Then slice
-        df_3mo = df_3mo_full.iloc[-slice_days:].copy() if len(df_3mo_full) >= slice_days else df_3mo_full.copy()
+        df_3mo = df_3mo_full.iloc[slice_days:].copy() if len(df_3mo_full) >= slice_days else df_3mo_full.copy()
         self.transformed_dataframes[metric_3mo] = df_3mo
         self.new_classification_map[metric_3mo] = factor_category
         
@@ -480,7 +475,7 @@ class QuantMetricsTransformer:
         metric_6mo = f"{metric_name}_6mo_pct_chg"
         df_6mo_full = df.pct_change(periods=self.SIX_MONTH_DAYS) * 100
         # Then slice
-        df_6mo = df_6mo_full.iloc[-slice_days:].copy() if len(df_6mo_full) >= slice_days else df_6mo_full.copy()
+        df_6mo = df_6mo_full.iloc[slice_days:].copy() if len(df_6mo_full) >= slice_days else df_6mo_full.copy()
         self.transformed_dataframes[metric_6mo] = df_6mo
         self.new_classification_map[metric_6mo] = factor_category
 
@@ -488,7 +483,7 @@ class QuantMetricsTransformer:
         metric_12mo = f"{metric_name}_12mo_pct_chg"
         df_12mo_full = df.pct_change(periods=self.TWELVE_MONTH_DAYS) * 100
         # Then slice
-        df_12mo = df_12mo_full.iloc[-slice_days:].copy() if len(df_12mo_full) >= slice_days else df_12mo_full.copy()
+        df_12mo = df_12mo_full.iloc[slice_days:].copy() if len(df_12mo_full) >= slice_days else df_12mo_full.copy()
         self.transformed_dataframes[metric_12mo] = df_12mo
         self.new_classification_map[metric_12mo] = factor_category
         
@@ -501,7 +496,7 @@ class QuantMetricsTransformer:
         metric_1mo = f"{metric_name}_1mo_diff_chg"
         df_1mo_full = df.diff(periods=self.ONE_MONTH_DAYS) * 100
         # Then slice
-        df_1mo = df_1mo_full.iloc[-slice_days:].copy() if len(df_1mo_full) >= slice_days else df_1mo_full.copy()
+        df_1mo = df_1mo_full.iloc[slice_days:].copy() if len(df_1mo_full) >= slice_days else df_1mo_full.copy()
         self.transformed_dataframes[metric_1mo] = df_1mo
         self.new_classification_map[metric_1mo] = factor_category
 
@@ -509,7 +504,7 @@ class QuantMetricsTransformer:
         metric_3mo = f"{metric_name}_3mo_diff_chg"
         df_3mo_full = df.diff(periods=self.THREE_MONTH_DAYS)
         # Then slice
-        df_3mo = df_3mo_full.iloc[-slice_days:].copy() if len(df_3mo_full) >= slice_days else df_3mo_full.copy()
+        df_3mo = df_3mo_full.iloc[slice_days:].copy() if len(df_3mo_full) >= slice_days else df_3mo_full.copy()
         self.transformed_dataframes[metric_3mo] = df_3mo
         self.new_classification_map[metric_3mo] = factor_category
         
@@ -517,7 +512,7 @@ class QuantMetricsTransformer:
         metric_6mo = f"{metric_name}_6mo_diff_chg"
         df_6mo_full = df.diff(periods=self.SIX_MONTH_DAYS) * 100
         # Then slice
-        df_6mo = df_6mo_full.iloc[-slice_days:].copy() if len(df_6mo_full) >= slice_days else df_6mo_full.copy()
+        df_6mo = df_6mo_full.iloc[slice_days:].copy() if len(df_6mo_full) >= slice_days else df_6mo_full.copy()
         self.transformed_dataframes[metric_6mo] = df_6mo
         self.new_classification_map[metric_6mo] = factor_category
 
@@ -525,7 +520,7 @@ class QuantMetricsTransformer:
         metric_12mo = f"{metric_name}_12mo_diff_chg"
         df_12mo_full = df.diff(periods=self.TWELVE_MONTH_DAYS)
         # Then slice
-        df_12mo = df_12mo_full.iloc[-slice_days:].copy() if len(df_12mo_full) >= slice_days else df_12mo_full.copy()
+        df_12mo = df_12mo_full.iloc[slice_days:].copy() if len(df_12mo_full) >= slice_days else df_12mo_full.copy()
         self.transformed_dataframes[metric_12mo] = df_12mo
         self.new_classification_map[metric_12mo] = factor_category
         
@@ -769,19 +764,12 @@ transformer = QuantMetricsTransformer()
 transformer.load_data(dataFrames).transform().validate().generate_report()
 
 # # Get results
-transformed_data, new_classification = transformer.get_results()
+transformed_dataFrames, new_classification = transformer.get_results()
 
 
 # Get specific factor metrics
 valuation_metrics = transformer.get_metrics_by_factor('Valuation')
-percent_change_metrics = transformer.get_metrics_by_transformation('3mo_pct_chg')
-
-#%%
-
-# Save results
-transformer.save_results('transformed_metrics.excel')
-
-
+percent_change_metrics = transformer.get_metrics_by_transformation('6mo_pct_chg')
 
 
 #%%
@@ -923,7 +911,7 @@ class CountryFactorSelectionFramework:
         Dict[str, int] : Factor to directionality mapping (1 or -1)
         """
         
-        directionality_map = {
+        direction = {
             # VALUATION FACTORS (Lower multiples = better, so INVERT)
             'PE': -1,                    # Lower P/E is cheaper/better
             'Fwd_PE': -1,               # Lower forward P/E is better
@@ -1008,6 +996,27 @@ class CountryFactorSelectionFramework:
             'GDP': 1,                   # Higher GDP growth is better
             'M2': 1,                    # Money supply growth can be positive for assets
         }
+
+        directionality_map={}
+        for key in direction.keys():
+            #1mo
+            directionality_map[key +'_1mo_pct_chg'] = direction[key]
+            directionality_map[key +'_1mo_diff_chg'] = direction[key]
+            
+            #3mo
+            directionality_map[key +'_3mo_pct_chg'] = direction[key]
+            directionality_map[key +'_3mo_diff_chg'] = direction[key]            
+            
+            #6mo
+            directionality_map[key +'_6mo_pct_chg'] = direction[key]
+            directionality_map[key +'_6mo_diff_chg'] = direction[key]
+
+            #12mo
+            directionality_map[key +'_12mo_pct_chg'] = direction[key]
+            directionality_map[key +'_12mo_diff_chg'] = direction[key]                        
+            
+            #Absolute
+            directionality_map[key] = direction[key]
         
         return directionality_map
     
@@ -2262,7 +2271,7 @@ framework = CountryFactorSelectionFramework(
 )
 
 # Run complete analysis on your DataFrames
-results = framework.run_complete_analysis(dataFrames)
+results = framework.run_complete_analysis(transformed_dataFrames)
 
 # Get directionality report
 directionality_report = framework.get_directionality_report()
@@ -2280,7 +2289,7 @@ final_matrix = framework.create_final_factor_matrix(directionality_corrected_dat
 framework.plot_correlation_heatmap(results['correlation_matrix'], selected_factors)
 
 # Export selected factors
-export_selected_factors_data(dataFrames, selected_factors, 'SelectedFactors')
+export_selected_factors_data(transformed_dataFrames, selected_factors, 'SelectedFactors')
 
 # Export selected factors - directionality corrected
 export_selected_factors_data(directionality_corrected_dataFrames, selected_factors, 'SelectedFactorsDirectionalityCorrected')
@@ -2994,8 +3003,7 @@ stats_df = category_generator.get_signal_statistics()
 print(stats_df)
 
 
-#%%
-
+#%% #BACKTEST SIGNAL
 
 
 
