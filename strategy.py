@@ -218,7 +218,9 @@ class QuantMetricsTransformer:
     """
     
     # Class constants
+    ONE_MONTH_DAYS = 21
     THREE_MONTH_DAYS = 63
+    SIX_MONTH_DAYS = 126
     TWELVE_MONTH_DAYS = 252
     
     def __init__(self, 
@@ -458,6 +460,14 @@ class QuantMetricsTransformer:
     def _process_percent(self, metric_name: str, df: pd.DataFrame, factor_category: str, slice_days: int) -> None:
         """Process metrics with percent change transformation."""
         # Apply transformations on full dataset first
+        # 1-month percent change
+        metric_1mo = f"{metric_name}_1mo_pct_chg"
+        df_1mo_full = df.pct_change(periods=self.ONE_MONTH_DAYS) * 100
+        # Then slice
+        df_1mo = df_1mo_full.iloc[-slice_days:].copy() if len(df_1mo_full) >= slice_days else df_1mo_full.copy()
+        self.transformed_dataframes[metric_1mo] = df_1mo
+        self.new_classification_map[metric_1mo] = factor_category
+
         # 3-month percent change
         metric_3mo = f"{metric_name}_3mo_pct_chg"
         df_3mo_full = df.pct_change(periods=self.THREE_MONTH_DAYS) * 100
@@ -466,6 +476,14 @@ class QuantMetricsTransformer:
         self.transformed_dataframes[metric_3mo] = df_3mo
         self.new_classification_map[metric_3mo] = factor_category
         
+        # 6-month percent change
+        metric_6mo = f"{metric_name}_6mo_pct_chg"
+        df_6mo_full = df.pct_change(periods=self.SIX_MONTH_DAYS) * 100
+        # Then slice
+        df_6mo = df_6mo_full.iloc[-slice_days:].copy() if len(df_6mo_full) >= slice_days else df_6mo_full.copy()
+        self.transformed_dataframes[metric_6mo] = df_6mo
+        self.new_classification_map[metric_6mo] = factor_category
+
         # 12-month percent change  
         metric_12mo = f"{metric_name}_12mo_pct_chg"
         df_12mo_full = df.pct_change(periods=self.TWELVE_MONTH_DAYS) * 100
@@ -479,6 +497,14 @@ class QuantMetricsTransformer:
     def _process_difference(self, metric_name: str, df: pd.DataFrame, factor_category: str, slice_days: int) -> None:
         """Process metrics with difference transformation."""
         # Apply transformations on full dataset first
+        # 1-month percent change
+        metric_1mo = f"{metric_name}_1mo_diff_chg"
+        df_1mo_full = df.diff(periods=self.ONE_MONTH_DAYS) * 100
+        # Then slice
+        df_1mo = df_1mo_full.iloc[-slice_days:].copy() if len(df_1mo_full) >= slice_days else df_1mo_full.copy()
+        self.transformed_dataframes[metric_1mo] = df_1mo
+        self.new_classification_map[metric_1mo] = factor_category
+
         # 3-month difference
         metric_3mo = f"{metric_name}_3mo_diff_chg"
         df_3mo_full = df.diff(periods=self.THREE_MONTH_DAYS)
@@ -487,6 +513,14 @@ class QuantMetricsTransformer:
         self.transformed_dataframes[metric_3mo] = df_3mo
         self.new_classification_map[metric_3mo] = factor_category
         
+        # 6-month percent change
+        metric_6mo = f"{metric_name}_6mo_diff_chg"
+        df_6mo_full = df.diff(periods=self.SIX_MONTH_DAYS) * 100
+        # Then slice
+        df_6mo = df_6mo_full.iloc[-slice_days:].copy() if len(df_6mo_full) >= slice_days else df_6mo_full.copy()
+        self.transformed_dataframes[metric_6mo] = df_6mo
+        self.new_classification_map[metric_6mo] = factor_category
+
         # 12-month difference
         metric_12mo = f"{metric_name}_12mo_diff_chg"
         df_12mo_full = df.diff(periods=self.TWELVE_MONTH_DAYS)
@@ -585,14 +619,20 @@ class QuantMetricsTransformer:
             print(f"{factor.upper()} ({len(metrics)} metrics):")
             
             # Separate by transformation type
-            absolute_metrics = [m for m in metrics if not ('_3mo_' in m or '_12mo_' in m)]
+            absolute_metrics = [m for m in metrics if not ('_1mo_' in m or '_3mo_' in m or '_6mo_' in m or '_12mo_' in m)]
+            one_mo_metrics = [m for m in metrics if '_1mo_' in m]
             three_mo_metrics = [m for m in metrics if '_3mo_' in m]
+            six_mo_metrics = [m for m in metrics if '_6mo_' in m]            
             twelve_mo_metrics = [m for m in metrics if '_12mo_' in m]
             
             if absolute_metrics:
                 print(f"  Absolute: {', '.join(sorted(absolute_metrics))}")
+            if one_mo_metrics:
+                print(f"  1-Month: {', '.join(sorted(one_mo_metrics))}")    
             if three_mo_metrics:
                 print(f"  3-Month: {', '.join(sorted(three_mo_metrics))}")
+            if six_mo_metrics:
+                print(f"  6-Month: {', '.join(sorted(six_mo_metrics))}")
             if twelve_mo_metrics:
                 print(f"  12-Month: {', '.join(sorted(twelve_mo_metrics))}")
             print()
@@ -640,7 +680,7 @@ class QuantMetricsTransformer:
         if transformation_type == 'absolute':
             return {
                 metric: df for metric, df in self.transformed_dataframes.items()
-                if not ('_3mo_' in metric or '_12mo_' in metric)
+                if not ('_1mo_' in metric or '_3mo_' in metric or '_6mo_' in metric or '_12mo_' in metric)
             }
         else:
             return {
