@@ -20,7 +20,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import mutual_info_regression
 from statsmodels.stats.outliers_influence import variance_inflation_factor
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 warnings.filterwarnings('ignore')
 
 
@@ -194,6 +194,555 @@ print(f"   • processed_data: Same as dataFrames (alias)")
 #%%
 #Quick data exploration
 fm.explore_data(dataFrames, regions_dict)
+
+#%%
+
+import pandas as pd
+import numpy as np
+from typing import Dict, Any, Tuple, Optional
+import warnings
+
+
+class QuantMetricsTransformer:
+    """
+    A comprehensive class for transforming quantitative finance metrics.
+    
+    This class handles the transformation of financial metrics based on predefined rules:
+    - Absolute: No transformation (ratios, yields, etc.)
+    - Percent: Point-to-point percentage changes over 3M and 12M periods
+    - Difference: Point-to-point differences over 3M and 12M periods
+    
+    Attributes:
+        THREE_MONTH_DAYS (int): Business days in 3 months (63)
+        TWELVE_MONTH_DAYS (int): Business days in 12 months (252)
+    """
+    
+    # Class constants
+    THREE_MONTH_DAYS = 63
+    TWELVE_MONTH_DAYS = 252
+    
+    def __init__(self, 
+                 dataframes: Optional[Dict[str, pd.DataFrame]] = None,
+                 classification_map: Optional[Dict[str, str]] = None,
+                 transformation_map: Optional[Dict[str, str]] = None):
+        """
+        Initialize the QuantMetricsTransformer.
+        
+        Parameters:
+        -----------
+        dataframes : dict, optional
+            Dictionary with metric names as keys and DataFrames as values
+        classification_map : dict, optional
+            Dictionary mapping metrics to factor categories
+        transformation_map : dict, optional
+            Dictionary specifying transformation type for each metric
+        """
+        self.original_dataframes = dataframes or {}
+        self.transformed_dataframes = {}
+        self.new_classification_map = {}
+        
+        # Set default maps if not provided
+        self.classification_map = classification_map or self._get_default_classification_map()
+        self.transformation_map = transformation_map or self._get_default_transformation_map()
+        
+        # Transformation statistics
+        self.transform_stats = {
+            'absolute': 0,
+            'percent': 0, 
+            'difference': 0,
+            'skipped': 0
+        }
+    
+    @staticmethod
+    def _get_default_classification_map() -> Dict[str, str]:
+        """Return the default classification map for factor categories."""
+        return {
+            # VALUATION FACTORS
+            'PE': 'Valuation', 'Fwd_PE': 'Valuation', 'PB': 'Valuation',
+            'PS': 'Valuation', 'Fwd_PS': 'Valuation', 'PCF': 'Valuation',
+            'Fwd_PCF': 'Valuation', 'EV_EBIT': 'Valuation', 'EV_EBITDA': 'Valuation',
+            'Fwd_EV_EBITDA': 'Valuation', 'EarningsYieldTTM': 'Valuation',
+            'EarningsYieldFWD': 'Valuation', 'CashFlowYieldTTM': 'Valuation',
+            'CashFlowYieldFWD': 'Valuation', 'DVD': 'Valuation', 'Fwd_DVD': 'Valuation',
+            
+            # VALUATION SPREADS
+            'EarningsYieldTTMSpread': 'Valuation', 'EarningsYieldFWDSpread': 'Valuation',
+            'CashFlowYieldTTMSpread': 'Valuation', 'CashFlowYieldFWDSpread': 'Valuation',
+            'DvdYieldTTMSpread': 'Valuation', 'DvdYieldFWDSpread': 'Valuation',
+            
+            # QUALITY FACTORS
+            'Debt_to_Equity': 'Quality', 'Net_Debt_Ebitda': 'Quality',
+            'AssetsEquity': 'Quality', 'Debt': 'Quality', 'Equity': 'Quality',
+            'Liabilities': 'Quality', 'CF': 'Quality', 'FwdCF': 'Quality',
+            
+            # PROFITABILITY FACTORS
+            'EbitMargin': 'Profitability', 'EbitdaMargin': 'Profitability',
+            'NetMargin': 'Profitability', 'FwdEBITDAMargin': 'Profitability',
+            'FwdNetMargin': 'Profitability', 'EBIT': 'Profitability',
+            'EBITDA': 'Profitability', 'FwdEBITDA': 'Profitability',
+            'EPS': 'Profitability', 'Earnings': 'Profitability',
+            'FwdEarnings': 'Profitability', 'ROE': 'Profitability',
+            'Fwd_ROE': 'Profitability', 'Return_Capital': 'Profitability',
+            
+            # MOMENTUM FACTORS
+            'ConsensusSalesGrowth': 'Momentum', 'ConsensusEbitdaGrowth': 'Momentum',
+            'ConsensusEarningsGrowth': 'Momentum', 'ConsensusCashFlowGrowth': 'Momentum',
+            'RollingEarnings': 'Momentum', 'FwdRollingEarnings': 'Momentum',
+            'CumFlow': 'Momentum', 'Flows': 'Momentum',
+            
+            # SIZE FACTORS
+            'Market_Cap': 'Size', 'EV': 'Size', 'Revenue': 'Size',
+            'FwdRevenue': 'Size', 'Price': 'Size', 'Assets': 'Size',
+            
+            # RISK FACTORS
+            'RollingVol': 'Risk', 'Ten_Year': 'Risk',
+            
+            # SENTIMENT FACTORS
+            'SI': 'Sentiment', 'SI_Ratio': 'Sentiment',
+            
+            # MACRO FACTORS
+            'GDP': 'Macro', 'M2': 'Macro'
+        }
+    
+    @staticmethod
+    def _get_default_transformation_map() -> Dict[str, str]:
+        """Return the default transformation map."""
+        return {
+            # ABSOLUTE - No transformation needed
+            'PE': 'absolute', 'Fwd_PE': 'absolute', 'PB': 'absolute',
+            'PS': 'absolute', 'Fwd_PS': 'absolute', 'PCF': 'absolute',
+            'Fwd_PCF': 'absolute', 'EV_EBIT': 'absolute', 'EV_EBITDA': 'absolute',
+            'Fwd_EV_EBITDA': 'absolute', 'EarningsYieldTTM': 'absolute',
+            'EarningsYieldFWD': 'absolute', 'CashFlowYieldTTM': 'absolute',
+            'CashFlowYieldFWD': 'absolute', 'DVD': 'absolute', 'Fwd_DVD': 'absolute',
+            'Debt_to_Equity': 'absolute', 'Net_Debt_Ebitda': 'absolute',
+            'AssetsEquity': 'absolute', 'SI': 'absolute', 'SI_Ratio': 'absolute',
+            
+            # DIFFERENCE - Point-to-point differences
+            'EarningsYieldTTMSpread': 'difference', 'EarningsYieldFWDSpread': 'difference',
+            'CashFlowYieldTTMSpread': 'difference', 'CashFlowYieldFWDSpread': 'difference',
+            'DvdYieldTTMSpread': 'difference', 'DvdYieldFWDSpread': 'difference',
+            'EbitMargin': 'difference', 'EbitdaMargin': 'difference',
+            'NetMargin': 'difference', 'FwdEBITDAMargin': 'difference',
+            'FwdNetMargin': 'difference', 'ROE': 'difference', 'Fwd_ROE': 'difference',
+            'Return_Capital': 'difference', 'ConsensusSalesGrowth': 'difference',
+            'ConsensusEbitdaGrowth': 'difference', 'ConsensusEarningsGrowth': 'difference',
+            'ConsensusCashFlowGrowth': 'difference', 'RollingEarnings': 'difference',
+            'FwdRollingEarnings': 'difference', 'RollingVol': 'difference',
+            'Ten_Year': 'difference', 'CumFlow': 'difference', 'Flows': 'difference',
+            
+            # PERCENT - Percentage changes
+            'Debt': 'percent', 'Equity': 'percent', 'Liabilities': 'percent',
+            'CF': 'percent', 'FwdCF': 'percent', 'EBIT': 'percent',
+            'EBITDA': 'percent', 'FwdEBITDA': 'percent', 'EPS': 'percent',
+            'Earnings': 'percent', 'FwdEarnings': 'percent', 'Market_Cap': 'percent',
+            'EV': 'percent', 'Revenue': 'percent', 'FwdRevenue': 'percent',
+            'Price': 'percent', 'Assets': 'percent', 'GDP': 'percent', 'M2': 'percent'
+        }
+    
+    def load_data(self, dataframes: Dict[str, pd.DataFrame]) -> 'QuantMetricsTransformer':
+        """
+        Load dataframes into the transformer.
+        
+        Parameters:
+        -----------
+        dataframes : dict
+            Dictionary with metric names as keys and DataFrames as values
+            
+        Returns:
+        --------
+        self : QuantMetricsTransformer
+            Returns self for method chaining
+        """
+        self.original_dataframes = dataframes
+        return self
+    
+    def set_classification_map(self, classification_map: Dict[str, str]) -> 'QuantMetricsTransformer':
+        """
+        Set custom classification map.
+        
+        Parameters:
+        -----------
+        classification_map : dict
+            Dictionary mapping metrics to factor categories
+            
+        Returns:
+        --------
+        self : QuantMetricsTransformer
+            Returns self for method chaining
+        """
+        self.classification_map = classification_map
+        return self
+    
+    def set_transformation_map(self, transformation_map: Dict[str, str]) -> 'QuantMetricsTransformer':
+        """
+        Set custom transformation map.
+        
+        Parameters:
+        -----------
+        transformation_map : dict
+            Dictionary specifying transformation type for each metric
+            
+        Returns:
+        --------
+        self : QuantMetricsTransformer
+            Returns self for method chaining
+        """
+        self.transformation_map = transformation_map
+        return self
+    
+    def transform(self, slice_months: int = 12) -> 'QuantMetricsTransformer':
+        """
+        Execute the transformation of all metrics.
+        
+        Parameters:
+        -----------
+        slice_months : int, default=12
+            Number of months to slice from the end of each dataframe for consistency
+            (slicing is applied AFTER transformations to preserve data for calculations)
+            
+        Returns:
+        --------
+        self : QuantMetricsTransformer
+            Returns self for method chaining
+        """
+        if not self.original_dataframes:
+            raise ValueError("No dataframes loaded. Use load_data() first.")
+        
+        # Calculate slice period in business days
+        slice_days = slice_months * 21  # Approximate business days per month
+        
+        # Reset transformation results
+        self.transformed_dataframes = {}
+        self.new_classification_map = {}
+        self.transform_stats = {key: 0 for key in self.transform_stats}
+        
+        # Process each metric (transformation first, then slice)
+        for metric_name, df in self.original_dataframes.items():
+            self._process_metric(metric_name, df, slice_days)
+        
+        return self
+    
+    def _process_metric(self, metric_name: str, df: pd.DataFrame, slice_days: int) -> None:
+        """Process a single metric according to its transformation type."""
+        
+        # Skip if metric not in transformation_map
+        if metric_name not in self.transformation_map:
+            warnings.warn(f"{metric_name} not found in transformation_map, skipping...")
+            self.transform_stats['skipped'] += 1
+            return
+        
+        # Get transformation type and factor category
+        transform_type = self.transformation_map[metric_name]
+        factor_category = self.classification_map.get(metric_name, 'Unknown')
+        
+        # Apply transformation FIRST on full dataset, then slice
+        if transform_type == 'absolute':
+            self._process_absolute(metric_name, df, factor_category, slice_days)
+        elif transform_type == 'percent':
+            self._process_percent(metric_name, df, factor_category, slice_days)
+        elif transform_type == 'difference':
+            self._process_difference(metric_name, df, factor_category, slice_days)
+        else:
+            warnings.warn(f"Unknown transformation type '{transform_type}' for {metric_name}")
+            self.transform_stats['skipped'] += 1
+    
+    def _process_absolute(self, metric_name: str, df: pd.DataFrame, factor_category: str, slice_days: int) -> None:
+        """Process metrics with absolute transformation (no change)."""
+        # For absolute metrics, just slice the original data
+        df_sliced = df.iloc[-slice_days:].copy() if len(df) >= slice_days else df.copy()
+        self.transformed_dataframes[metric_name] = df_sliced
+        self.new_classification_map[metric_name] = factor_category
+        self.transform_stats['absolute'] += 1
+    
+    def _process_percent(self, metric_name: str, df: pd.DataFrame, factor_category: str, slice_days: int) -> None:
+        """Process metrics with percent change transformation."""
+        # Apply transformations on full dataset first
+        # 3-month percent change
+        metric_3mo = f"{metric_name}_3mo_pct_chg"
+        df_3mo_full = df.pct_change(periods=self.THREE_MONTH_DAYS) * 100
+        # Then slice
+        df_3mo = df_3mo_full.iloc[-slice_days:].copy() if len(df_3mo_full) >= slice_days else df_3mo_full.copy()
+        self.transformed_dataframes[metric_3mo] = df_3mo
+        self.new_classification_map[metric_3mo] = factor_category
+        
+        # 12-month percent change  
+        metric_12mo = f"{metric_name}_12mo_pct_chg"
+        df_12mo_full = df.pct_change(periods=self.TWELVE_MONTH_DAYS) * 100
+        # Then slice
+        df_12mo = df_12mo_full.iloc[-slice_days:].copy() if len(df_12mo_full) >= slice_days else df_12mo_full.copy()
+        self.transformed_dataframes[metric_12mo] = df_12mo
+        self.new_classification_map[metric_12mo] = factor_category
+        
+        self.transform_stats['percent'] += 1
+    
+    def _process_difference(self, metric_name: str, df: pd.DataFrame, factor_category: str, slice_days: int) -> None:
+        """Process metrics with difference transformation."""
+        # Apply transformations on full dataset first
+        # 3-month difference
+        metric_3mo = f"{metric_name}_3mo_diff_chg"
+        df_3mo_full = df.diff(periods=self.THREE_MONTH_DAYS)
+        # Then slice
+        df_3mo = df_3mo_full.iloc[-slice_days:].copy() if len(df_3mo_full) >= slice_days else df_3mo_full.copy()
+        self.transformed_dataframes[metric_3mo] = df_3mo
+        self.new_classification_map[metric_3mo] = factor_category
+        
+        # 12-month difference
+        metric_12mo = f"{metric_name}_12mo_diff_chg"
+        df_12mo_full = df.diff(periods=self.TWELVE_MONTH_DAYS)
+        # Then slice
+        df_12mo = df_12mo_full.iloc[-slice_days:].copy() if len(df_12mo_full) >= slice_days else df_12mo_full.copy()
+        self.transformed_dataframes[metric_12mo] = df_12mo
+        self.new_classification_map[metric_12mo] = factor_category
+        
+        self.transform_stats['difference'] += 1
+    
+    def get_results(self) -> Tuple[Dict[str, pd.DataFrame], Dict[str, str]]:
+        """
+        Get the transformation results.
+        
+        Returns:
+        --------
+        tuple
+            (transformed_dataframes, new_classification_map)
+        """
+        if not self.transformed_dataframes:
+            raise ValueError("No transformations performed. Run transform() first.")
+        
+        return self.transformed_dataframes, self.new_classification_map
+    
+    def validate(self, verbose: bool = True) -> 'QuantMetricsTransformer':
+        """
+        Validate the transformations.
+        
+        Parameters:
+        -----------
+        verbose : bool, default=True
+            Whether to print detailed validation results
+            
+        Returns:
+        --------
+        self : QuantMetricsTransformer
+            Returns self for method chaining (validation result stored in self.validation_passed)
+        """
+        if not self.transformed_dataframes:
+            if verbose:
+                print("No transformations to validate. Run transform() first.")
+            self.validation_passed = False
+            return self
+        
+        # Calculate expected metrics count
+        original_metrics = [m for m in self.transformation_map.keys() 
+                          if m in self.original_dataframes]
+        
+        expected_count = (
+            sum(1 for m in original_metrics 
+                if self.transformation_map[m] == 'absolute') +
+            sum(2 for m in original_metrics 
+                if self.transformation_map[m] == 'percent') +
+            sum(2 for m in original_metrics 
+                if self.transformation_map[m] == 'difference')
+        )
+        
+        actual_count = len(self.transformed_dataframes)
+        validation_passed = actual_count == expected_count
+        
+        # Store validation result as instance attribute
+        self.validation_passed = validation_passed
+        
+        if verbose:
+            print("=== TRANSFORMATION VALIDATION ===\n")
+            print("Original metrics by transformation type:")
+            for transform_type in ['absolute', 'percent', 'difference']:
+                count = self.transform_stats[transform_type]
+                print(f"  {transform_type}: {count} metrics")
+            
+            print(f"\nTotal original metrics processed: {sum(self.transform_stats.values()) - self.transform_stats['skipped']}")
+            print(f"Total transformed metrics: {actual_count}")
+            print(f"Expected transformed metrics: {expected_count}")
+            print(f"Skipped metrics: {self.transform_stats['skipped']}")
+            print(f"Validation: {'✓ PASSED' if validation_passed else '✗ FAILED'}")
+        
+        return self
+    
+    def generate_report(self) -> None:
+        """Generate a comprehensive summary report of the transformations."""
+        if not self.transformed_dataframes:
+            print("No transformations to report. Run transform() first.")
+            return
+        
+        print("\n=== TRANSFORMATION SUMMARY REPORT ===\n")
+        
+        # Group by factor category
+        factor_groups = {}
+        for metric, factor in self.new_classification_map.items():
+            if factor not in factor_groups:
+                factor_groups[factor] = []
+            factor_groups[factor].append(metric)
+        
+        print("Transformed metrics by factor category:\n")
+        for factor, metrics in sorted(factor_groups.items()):
+            print(f"{factor.upper()} ({len(metrics)} metrics):")
+            
+            # Separate by transformation type
+            absolute_metrics = [m for m in metrics if not ('_3mo_' in m or '_12mo_' in m)]
+            three_mo_metrics = [m for m in metrics if '_3mo_' in m]
+            twelve_mo_metrics = [m for m in metrics if '_12mo_' in m]
+            
+            if absolute_metrics:
+                print(f"  Absolute: {', '.join(sorted(absolute_metrics))}")
+            if three_mo_metrics:
+                print(f"  3-Month: {', '.join(sorted(three_mo_metrics))}")
+            if twelve_mo_metrics:
+                print(f"  12-Month: {', '.join(sorted(twelve_mo_metrics))}")
+            print()
+    
+    def get_metrics_by_factor(self, factor_category: str) -> Dict[str, pd.DataFrame]:
+        """
+        Get all transformed metrics for a specific factor category.
+        
+        Parameters:
+        -----------
+        factor_category : str
+            The factor category to filter by (e.g., 'Valuation', 'Quality')
+            
+        Returns:
+        --------
+        dict
+            Dictionary of metrics belonging to the specified factor category
+        """
+        if not self.transformed_dataframes:
+            raise ValueError("No transformations performed. Run transform() first.")
+        
+        return {
+            metric: df for metric, df in self.transformed_dataframes.items()
+            if self.new_classification_map.get(metric) == factor_category
+        }
+    
+    def get_metrics_by_transformation(self, transformation_type: str) -> Dict[str, pd.DataFrame]:
+        """
+        Get all metrics by transformation type.
+        
+        Parameters:
+        -----------
+        transformation_type : str
+            The transformation type ('absolute', '3mo_pct_chg', '12mo_pct_chg', 
+                                   '3mo_diff_chg', '12mo_diff_chg')
+            
+        Returns:
+        --------
+        dict
+            Dictionary of metrics with the specified transformation type
+        """
+        if not self.transformed_dataframes:
+            raise ValueError("No transformations performed. Run transform() first.")
+        
+        if transformation_type == 'absolute':
+            return {
+                metric: df for metric, df in self.transformed_dataframes.items()
+                if not ('_3mo_' in metric or '_12mo_' in metric)
+            }
+        else:
+            return {
+                metric: df for metric, df in self.transformed_dataframes.items()
+                if transformation_type in metric
+            }
+    
+    def save_results(self, filepath: str, format: str = 'pickle') -> None:
+        """
+        Save transformation results to file.
+        
+        Parameters:
+        -----------
+        filepath : str
+            Path to save the results
+        format : str, default='pickle'
+            Format to save ('pickle', 'excel', 'csv')
+        """
+        if not self.transformed_dataframes:
+            raise ValueError("No transformations to save. Run transform() first.")
+        
+        if format == 'pickle':
+            import pickle
+            with open(filepath, 'wb') as f:
+                pickle.dump({
+                    'transformed_dataframes': self.transformed_dataframes,
+                    'classification_map': self.new_classification_map,
+                    'transform_stats': self.transform_stats
+                }, f)
+        elif format == 'excel':
+            with pd.ExcelWriter(filepath, engine='xlsxwriter') as writer:
+                for metric, df in self.transformed_dataframes.items():
+                    # Excel sheet names have a 31 character limit
+                    sheet_name = metric[:31] if len(metric) > 31 else metric
+                    df.to_excel(writer, sheet_name=sheet_name)
+        else:
+            raise ValueError("Unsupported format. Use 'pickle' or 'excel'.")
+        
+        print(f"Results saved to {filepath}")
+
+
+# Example usage demonstration
+if __name__ == "__main__":
+    
+    # Create and configure the transformer
+    transformer = QuantMetricsTransformer()
+    
+    # Example usage (assuming you have your dataframes ready)
+    # transformer.load_data(dataFrames).transform().validate().generate_report()
+    
+    # Alternative usage with custom maps
+    # custom_classification_map = {...}  # Your custom map
+    # custom_transformation_map = {...}  # Your custom map
+    # 
+    # transformer = (QuantMetricsTransformer()
+    #                .load_data(dataFrames)
+    #                .set_classification_map(custom_classification_map)
+    #                .set_transformation_map(custom_transformation_map)
+    #                .transform()
+    #                .validate()
+    #                .generate_report())
+    # 
+    # # Get results
+    # transformed_data, new_classification = transformer.get_results()
+    # 
+    # # Get specific factor metrics
+    # valuation_metrics = transformer.get_metrics_by_factor('Valuation')
+    # percent_change_metrics = transformer.get_metrics_by_transformation('12mo_pct_chg')
+    # 
+    # # Save results
+    # transformer.save_results('transformed_metrics.pkl')
+    
+    print("QuantMetricsTransformer class ready for use!")
+    print("\nBasic usage:")
+    print("transformer = QuantMetricsTransformer()")
+    print("transformer.load_data(dataFrames).transform().validate().generate_report()")
+    print("transformed_data, classification_map = transformer.get_results()")
+
+
+
+#%%
+# Create and configure the transformer
+transformer = QuantMetricsTransformer()
+    
+# Example usage (assuming you have your dataframes ready)
+transformer.load_data(dataFrames).transform().validate().generate_report()
+
+# # Get results
+transformed_data, new_classification = transformer.get_results()
+
+
+# Get specific factor metrics
+valuation_metrics = transformer.get_metrics_by_factor('Valuation')
+percent_change_metrics = transformer.get_metrics_by_transformation('3mo_pct_chg')
+
+#%%
+
+# Save results
+transformer.save_results('transformed_metrics.excel')
+
+
+
 
 #%%
 
@@ -2388,22 +2937,6 @@ class SignalAnalyzer:
         plt.show()
 
 
-# Usage example:
-"""
-# Step 1: Generate category signals only
-category_generator = CategorySignalGenerator(data=your_data, 
-                                           classification_map=classification_map)
-category_signals = category_generator.generate_category_signals()
-
-# Step 2: Optionally create final alpha signal
-alpha_generator = AlphaSignalGenerator(category_signals)
-final_alpha = alpha_generator.create_final_alpha_signal(method='equal_weighted')
-
-# Step 3: Analyze and visualize
-analyzer = SignalAnalyzer(category_signals, final_alpha)
-analyzer.plot_signal_distributions()
-contributions = analyzer.calculate_category_contributions()
-"""
 
 #%%
 
@@ -2419,6 +2952,33 @@ category_signals = category_generator.generate_category_signals()
 # Get statistics
 stats_df = category_generator.get_signal_statistics()
 print(stats_df)
+
+
+#%%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #%%
 
@@ -2447,7 +3007,6 @@ analyzer.plot_category_contributions(
     date_range=('2020-01-01', '2024-01-01'),
     countries=['Japan']
 )
-
 
 # Plot distributions (optional, requires matplotlib)
 analyzer.plot_signal_distributions()
