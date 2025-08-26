@@ -1,0 +1,20 @@
+SELECTED FACTORS SUMMARY
+========================================
+
+Total Selected Factors: 12
+Successfully Exported: 12
+
+Selected Factors:
+--------------------
+ 1. AssetsEquity
+ 2. CashFlowYieldTTM
+ 3. EBITDA_12mo_pct_chg
+ 4. EBITDA_6mo_pct_chg
+ 5. EbitdaMargin_12mo_diff_chg
+ 6. EbitdaMargin_3mo_diff_chg
+ 7. Fwd_PS
+ 8. Net_Debt_Ebitda
+ 9. PCF
+10. PE
+11. SI
+12. SI_Ratio
