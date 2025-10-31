@@ -632,50 +632,86 @@ class QuantMetricsTransformer:
         """Return the default classification map for factor categories."""
         return {
             # VALUATION FACTORS
-            'PE': 'Valuation', 'Fwd_PE': 'Valuation', 'PB': 'Valuation',
-            'PS': 'Valuation', 'Fwd_PS': 'Valuation', 'PCF': 'Valuation',
-            'Fwd_PCF': 'Valuation', 'EV_EBIT': 'Valuation', 'EV_EBITDA': 'Valuation',
-            'Fwd_EV_EBITDA': 'Valuation', 'EarningsYieldTTM': 'Valuation',
-            'EarningsYieldFWD': 'Valuation', 'CashFlowYieldTTM': 'Valuation',
-            'CashFlowYieldFWD': 'Valuation', 'DVD': 'Valuation', 'Fwd_DVD': 'Valuation',
+            'PE': 'Valuation', 
+            'Fwd_PE': 'Valuation', 
+            'PB': 'Valuation',
+            'PS': 'Valuation', 
+            'Fwd_PS': 'Valuation', 
+            'PCF': 'Valuation',
+            'Fwd_PCF': 'Valuation', 
+            'EV_EBIT': 'Valuation', 
+            'EV_EBITDA': 'Valuation',
+            'Fwd_EV_EBITDA': 'Valuation', 
+            'EarningsYieldTTM':'Valuation',
+            'EarningsYieldFWD': 'Valuation', 
+            'CashFlowYieldTTM': 'Valuation',
+            'CashFlowYieldFWD': 'Valuation', 
+            'DVD': 'Valuation', 
+            'Fwd_DVD': 'Valuation',
             
             # VALUATION SPREADS
-            'EarningsYieldTTMSpread': 'Valuation', 'EarningsYieldFWDSpread': 'Valuation',
-            'CashFlowYieldTTMSpread': 'Valuation', 'CashFlowYieldFWDSpread': 'Valuation',
-            'DvdYieldTTMSpread': 'Valuation', 'DvdYieldFWDSpread': 'Valuation',
+            'EarningsYieldTTMSpread': 'Valuation', 
+            'EarningsYieldFWDSpread': 'Valuation',
+            'CashFlowYieldTTMSpread': 'Valuation', 
+            'CashFlowYieldFWDSpread': 'Valuation',
+            'DvdYieldTTMSpread': 'Valuation', 
+            'DvdYieldFWDSpread': 'Valuation',
             
             # QUALITY FACTORS
-            'Debt_to_Equity': 'Quality', 'Net_Debt_Ebitda': 'Quality',
-            'AssetsEquity': 'Quality', 'Debt': 'Quality', 'Equity': 'Quality',
-            'Liabilities': 'Quality', 'CF': 'Quality', 'FwdCF': 'Quality',
+            'Debt_to_Equity': 'Quality', 
+            'Net_Debt_Ebitda': 'Quality',
+            'AssetsEquity': 'Quality', 
+            'Debt': 'Quality', 
+            'Equity': 'Quality',
+            'Liabilities': 'Quality', 
+            'CF': 'Quality', 
+            'FwdCF': 'Quality',
             
             # PROFITABILITY FACTORS
-            'EbitMargin': 'Profitability', 'EbitdaMargin': 'Profitability',
-            'NetMargin': 'Profitability', 'FwdEBITDAMargin': 'Profitability',
-            'FwdNetMargin': 'Profitability', 'EBIT': 'Profitability',
-            'EBITDA': 'Profitability', 'FwdEBITDA': 'Profitability',
-            'EPS': 'Profitability', 'Earnings': 'Profitability',
-            'FwdEarnings': 'Profitability', 'ROE': 'Profitability',
-            'Fwd_ROE': 'Profitability', 'Return_Capital': 'Profitability',
+            'EbitMargin': 'Profitability', 
+            'EbitdaMargin': 'Profitability',
+            'NetMargin': 'Profitability', 
+            'FwdEBITDAMargin': 'Profitability',
+            'FwdNetMargin': 'Profitability', 
+            'EBIT': 'Profitability',
+            'EBITDA': 'Profitability', 
+            'FwdEBITDA': 'Profitability',
+            'EPS': 'Profitability', 
+            'Earnings': 'Profitability',
+            'FwdEarnings': 'Profitability', 
+            'ROE': 'Profitability',
+            'Fwd_ROE': 'Profitability', 
+            'Return_Capital': 'Profitability',
+            'ConsensusSalesGrowth': 'Profitability', 
+            'ConsensusEbitdaGrowth': 'Profitability',
+            'ConsensusEarningsGrowth': 'Profitability', 
+            'ConsensusCashFlowGrowth': 'Profitability',
             
             # MOMENTUM FACTORS
-            'ConsensusSalesGrowth': 'Momentum', 'ConsensusEbitdaGrowth': 'Momentum',
-            'ConsensusEarningsGrowth': 'Momentum', 'ConsensusCashFlowGrowth': 'Momentum',
-            'RollingEarnings': 'Momentum', 'FwdRollingEarnings': 'Momentum',
-            'CumFlow': 'Momentum', 'Flows': 'Momentum',
+            'RollingEarnings': 'Momentum', 
+            'FwdRollingEarnings': 'Momentum',
+            'CumFlow': 'Momentum', 
+            'Flows': 'Momentum',
             
             # SIZE FACTORS
-            'Market_Cap': 'Size', 'EV': 'Size', 'Revenue': 'Size',
-            'FwdRevenue': 'Size', 'Price': 'Size', 'Assets': 'Size',
+            'Market_Cap': 'Momentum', 
+            'EV': 'Momentum', 
+            'Revenue': 'Quality',
+            'FwdRevenue': 'Quality', 
+            'Price': 'Momentum', 
+            'Assets': 'Quality',
             
             # RISK FACTORS
-            'RollingVol': 'Risk', 'Ten_Year': 'Risk',
+            'RollingVol': 'Momentum', 
+            'Ten_Year': 'Macro',
             
             # SENTIMENT FACTORS
-            'SI': 'Sentiment', 'SI_Ratio': 'Sentiment',
+            'SI': 'Momentum', 
+            'SI_Ratio': 'Momentum',
             
             # MACRO FACTORS
-            'GDP': 'Macro', 'M2': 'Macro'
+            'GDP': 'Macro', 
+            'M2': 'Macro'
         }
     
     @staticmethod
@@ -683,35 +719,74 @@ class QuantMetricsTransformer:
         """Return the default transformation map."""
         return {
             # ABSOLUTE - No transformation needed
-            'PE': 'absolute', 'Fwd_PE': 'absolute', 'PB': 'absolute',
-            'PS': 'absolute', 'Fwd_PS': 'absolute', 'PCF': 'absolute',
-            'Fwd_PCF': 'absolute', 'EV_EBIT': 'absolute', 'EV_EBITDA': 'absolute',
-            'Fwd_EV_EBITDA': 'absolute', 'EarningsYieldTTM': 'absolute',
-            'EarningsYieldFWD': 'absolute', 'CashFlowYieldTTM': 'absolute',
-            'CashFlowYieldFWD': 'absolute', 'DVD': 'absolute', 'Fwd_DVD': 'absolute',
-            'Debt_to_Equity': 'absolute', 'Net_Debt_Ebitda': 'absolute',
-            'AssetsEquity': 'absolute', 'SI': 'absolute', 'SI_Ratio': 'absolute',
+            'PE': 'percent', 
+            'Fwd_PE': 'percent', 
+            'PB': 'percent',
+            'PS': 'percent', 
+            'Fwd_PS': 'percent', 
+            'PCF': 'percent',
+            'Fwd_PCF': 'percent', 
+            'EV_EBIT': 'percent', 
+            'EV_EBITDA': 'percent',
+            'Fwd_EV_EBITDA': 'percent', 
+            'EarningsYieldTTM': 'difference',
+            'EarningsYieldFWD': 'difference', 
+            'CashFlowYieldTTM': 'difference',
+            'CashFlowYieldFWD': 'difference', 
+            'DVD': 'difference', 
+            'Fwd_DVD': 'difference',
+            'Debt_to_Equity': 'difference', 
+            'Net_Debt_Ebitda': 'difference',
+            'AssetsEquity': 'difference', 
+            'SI': 'difference', 
+            'SI_Ratio': 'difference',
             
             # DIFFERENCE - Point-to-point differences
-            'EarningsYieldTTMSpread': 'difference', 'EarningsYieldFWDSpread': 'difference',
-            'CashFlowYieldTTMSpread': 'difference', 'CashFlowYieldFWDSpread': 'difference',
-            'DvdYieldTTMSpread': 'difference', 'DvdYieldFWDSpread': 'difference',
-            'EbitMargin': 'difference', 'EbitdaMargin': 'difference',
-            'NetMargin': 'difference', 'FwdEBITDAMargin': 'difference',
-            'FwdNetMargin': 'difference', 'ROE': 'difference', 'Fwd_ROE': 'difference',
-            'Return_Capital': 'difference', 'ConsensusSalesGrowth': 'difference',
-            'ConsensusEbitdaGrowth': 'difference', 'ConsensusEarningsGrowth': 'difference',
-            'ConsensusCashFlowGrowth': 'difference', 'RollingEarnings': 'difference',
-            'FwdRollingEarnings': 'difference', 'RollingVol': 'difference',
-            'Ten_Year': 'difference', 'CumFlow': 'difference', 'Flows': 'difference',
+            'EarningsYieldTTMSpread': 'difference', 
+            'EarningsYieldFWDSpread': 'difference',
+            'CashFlowYieldTTMSpread': 'difference', 
+            'CashFlowYieldFWDSpread': 'difference',
+            'DvdYieldTTMSpread': 'difference', 
+            'DvdYieldFWDSpread': 'difference',
+            'EbitMargin': 'difference', 
+            'EbitdaMargin': 'difference',
+            'NetMargin': 'difference', 
+            'FwdEBITDAMargin': 'difference',
+            'FwdNetMargin': 'difference', 
+            'ROE': 'difference', 
+            'Fwd_ROE': 'difference',
+            'Return_Capital': 'difference', 
+            'ConsensusSalesGrowth': 'difference',
+            'ConsensusEbitdaGrowth': 'difference', 
+            'ConsensusEarningsGrowth': 'difference',
+            'ConsensusCashFlowGrowth': 'difference', 
+            'RollingEarnings': 'difference',
+            'FwdRollingEarnings': 'difference', 
+            'RollingVol': 'difference',
+            'Ten_Year': 'difference', 
+            'CumFlow': 'difference', 
+            'Flows': 'difference',
             
             # PERCENT - Percentage changes
-            'Debt': 'percent', 'Equity': 'percent', 'Liabilities': 'percent',
-            'CF': 'percent', 'FwdCF': 'percent', 'EBIT': 'percent',
-            'EBITDA': 'percent', 'FwdEBITDA': 'percent', 'EPS': 'percent',
-            'Earnings': 'percent', 'FwdEarnings': 'percent', 'Market_Cap': 'percent',
-            'EV': 'percent', 'Revenue': 'percent', 'FwdRevenue': 'percent',
-            'Price': 'percent', 'Assets': 'percent', 'GDP': 'percent', 'M2': 'percent'
+            'Debt': 'percent', 
+            'Equity': 'percent', 
+            'Liabilities': 'percent',
+            'CF': 'percent',
+            'FwdCF': 'percent', 
+            'EBIT': 'percent',
+            'EBITDA': 'percent', 
+            'FwdEBITDA': 'percent', 
+            'EPS': 'percent',
+            'Earnings': 'percent', 
+            'FwdEarnings': 'percent', 
+            'Market_Cap': 'percent',
+            'EV': 'percent', 
+            'Revenue': 'percent', 
+            'FwdRevenue': 'percent',
+            'Price': 'percent', 
+            'Assets': 'percent', 
+            'GDP': 'percent', 
+            'M2': 'percent'
         }
     
     def load_data(self, dataframes: Dict[str, pd.DataFrame]) -> 'QuantMetricsTransformer':
@@ -1634,9 +1709,24 @@ class SignalAnalyzer:
         if countries:
             contributions = {k: v[countries] for k, v in contributions.items()}
         
+        
         # Create subplots
         fig, axes = plt.subplots(2, 2, figsize=figsize)
         
+        # --- Add the overall title to the figure ---
+        if countries:
+            if len(countries)==1:
+                country_names= countries[0]
+                fig.suptitle(f'Category Contribution for {country_names}', fontsize=16, fontweight='bold')
+            else:
+                country_names=''
+                for country in countries:
+                    country_names= country_names+', '+country 
+                    country_names=country_names[1:]
+                #country_names= [country +',' for country in countries]
+                fig.suptitle(f'Category Contribution for {country_names}', fontsize=16, fontweight='bold')
+
+
         # Plot 1: Time series of average contributions
         avg_contributions_over_time = pd.DataFrame({
             k: v.mean(axis=1) for k, v in contributions.items()

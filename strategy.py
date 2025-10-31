@@ -23,16 +23,14 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 from typing import Dict, List, Tuple, Any, Optional
 warnings.filterwarnings('ignore')
 
-
+# Set working directory
+os.chdir('D:/Users/avazquez/OneDrive - valmexcasabolsa/Documents/QuantModels/country_rotation')
 
 # Import all functions from the function module
 import function_module as fm
 
 warnings.filterwarnings('ignore')
 
-#%%
-# Set working directory
-os.chdir('D:/Users/avazquez/OneDrive - valmexcasabolsa/Documents/QuantModels/country_rotation')
 
 #%%
 def run_inputs():
@@ -191,15 +189,362 @@ print(f"   • processed_data: Same as dataFrames (alias)")
 #Quick data exploration
 fm.explore_data(dataFrames, regions_dict)
 
-#%%
-# Create and configure the transformer
-transformer = fm.QuantMetricsTransformer()
-    
-# Example usage (assuming you have your dataframes ready)
-transformer.load_data(dataFrames).transform().validate().generate_report()
 
-# Get results
-transformed_dataFrames, new_classification = transformer.get_results()
+#%%
+ direction = {
+     # VALUATION FACTORS (Lower multiples = better, so INVERT)
+     'PE': -1,                    # Lower P/E is cheaper/better
+     'Fwd_PE': -1,               # Lower forward P/E is better
+     'PB': -1,                   # Lower P/B is cheaper
+     'PS': -1,                   # Lower P/S is cheaper
+     'Fwd_PS': -1,               # Lower forward P/S is better
+     'PCF': -1,                  # Lower P/CF is cheaper
+     'Fwd_PCF': -1,              # Lower forward P/CF is better
+     'EV_EBIT': -1,              # Lower EV/EBIT is cheaper
+     'EV_EBITDA': -1,            # Lower EV/EBITDA is cheaper
+     'Fwd_EV_EBITDA': -1,        # Lower forward EV/EBITDA is better
+     'DVD': -1,                  # Lower dividend discount is better (higher yield)
+     'Fwd_DVD': -1,              # Lower forward dividend discount is better
+     
+     # YIELD FACTORS (Higher yields = better, so KEEP)
+     'EarningsYieldTTM': 1,      # Higher earnings yield is better
+     'EarningsYieldFWD': 1,      # Higher forward earnings yield is better
+     'CashFlowYieldTTM': 1,      # Higher cash flow yield is better
+     'CashFlowYieldFWD': 1,      # Higher forward cash flow yield is better
+     
+     # YIELD SPREADS (Higher spreads = better compensation, so KEEP)
+     'EarningsYieldTTMSpread': 1,
+     'EarningsYieldFWDSpread': 1,
+     'CashFlowYieldTTMSpread': 1,
+     'CashFlowYieldFWDSpread': 1,
+     'DvdYieldTTMSpread': 1,
+     'DvdYieldFWDSpread': 1,
+     
+     # QUALITY FACTORS (Mixed - depends on specific metric)
+     'ROE': 1,                   # Higher ROE is better
+     'Fwd_ROE': 1,               # Higher forward ROE is better
+     'Return_Capital': 1,        # Higher return on capital is better
+     'Debt_to_Equity': -1,       # Lower D/E ratio is better (less leverage risk)
+     'Net_Debt_Ebitda': -1,      # Lower net debt/EBITDA is better (less leverage)
+     'AssetsEquity': -1,         # Lower assets/equity could mean less leverage
+     'Assets': 1,                # More assets could be good (size/scale)
+     'Debt': -1,                 # Less absolute debt is generally better
+     'Equity': 1,                # More equity is generally better
+     'Liabilities': -1,          # Fewer liabilities is better
+     'CF': 1,                    # Higher cash flow is better
+     'FwdCF': 1,                 # Higher forward cash flow is better
+     
+     # PROFITABILITY FACTORS (Higher margins/profits = better, so KEEP)
+     'EbitMargin': 1,            # Higher EBIT margin is better
+     'EbitdaMargin': 1,          # Higher EBITDA margin is better
+     'NetMargin': 1,             # Higher net margin is better
+     'FwdEBITDAMargin': 1,       # Higher forward EBITDA margin is better
+     'FwdNetMargin': 1,          # Higher forward net margin is better
+     'EBIT': 1,                  # Higher EBIT is better
+     'EBITDA': 1,                # Higher EBITDA is better
+     'FwdEBITDA': 1,             # Higher forward EBITDA is better
+     'EPS': 1,                   # Higher EPS is better
+     'Earnings': 1,              # Higher earnings is better
+     'FwdEarnings': 1,           # Higher forward earnings is better
+     
+     # MOMENTUM FACTORS (Higher growth = better, so KEEP)
+     'ConsensusSalesGrowth': 1,      # Higher sales growth is better
+     'ConsensusEbitdaGrowth': 1,     # Higher EBITDA growth is better
+     'ConsensusEarningsGrowth': 1,   # Higher earnings growth is better
+     'ConsensusCashFlowGrowth': 1,   # Higher cash flow growth is better
+     'RollingEarnings': 1,           # Higher rolling earnings growth is better
+     'FwdRollingEarnings': 1,        # Higher forward rolling earnings is better
+     'CumFlow': 1,                   # Positive cumulative flows are better
+     'Flows': 1,                     # Positive flows are better
+     
+     # SIZE FACTORS (Depends on investment philosophy - assume larger is better for liquidity)
+     'Market_Cap': 1,            # Larger market cap (more liquidity, stability)
+     'EV': 1,                    # Larger enterprise value
+     'Revenue': 1,               # Higher revenue (scale)
+     'FwdRevenue': 1,            # Higher forward revenue
+     'Price': 1,                 # Price itself is neutral, but momentum positive
+     
+     # RISK FACTORS (Lower risk = better, so INVERT)
+     'RollingVol': -1,           # Lower volatility is better (less risky)
+     'Ten_Year': 1,              # Higher bond yields could mean higher risk premiums
+     
+     # SENTIMENT FACTORS (High short interest = negative sentiment, so INVERT)
+     'SI': -1,                   # Lower short interest is better
+     'SI_Ratio': -1,             # Lower short interest ratio is better
+     
+     # MACRO FACTORS (Higher growth = better, so KEEP)
+     'GDP': 1,                   # Higher GDP growth is better
+     'M2': 1,                    # Money supply growth can be positive for assets
+ }
+ 
+ #%%
+
+class FactorTransformer:
+    """
+    Transforms factor data into standardized metrics.
+    """
+    
+    def __init__(self):
+        self.factor_map = {
+            'PE': 'Valuation', 
+            'Fwd_PE': 'Valuation', 
+            'PB': 'Valuation',
+            'PS': 'Valuation', 
+            'Fwd_PS': 'Valuation', 
+            'PCF': 'Valuation',
+            'Fwd_PCF': 'Valuation', 
+            'EV_EBIT': 'Valuation', 
+            'EV_EBITDA': 'Valuation',
+            'Fwd_EV_EBITDA': 'Valuation', 
+            'EarningsYieldTTM':'Valuation',
+            'EarningsYieldFWD': 'Valuation', 
+            'CashFlowYieldTTM': 'Valuation',
+            'CashFlowYieldFWD': 'Valuation', 
+            'DVD': 'Valuation', 
+            'Fwd_DVD': 'Valuation',
+
+            # VALUATION SPREADS
+            'EarningsYieldTTMSpread': 'Valuation', 
+            'EarningsYieldFWDSpread': 'Valuation',
+            'CashFlowYieldTTMSpread': 'Valuation', 
+            'CashFlowYieldFWDSpread': 'Valuation',
+            'DvdYieldTTMSpread': 'Valuation', 
+            'DvdYieldFWDSpread': 'Valuation',
+
+            # QUALITY FACTORS
+            'Debt_to_Equity': 'Quality', 
+            'Net_Debt_Ebitda': 'Quality',
+            'AssetsEquity': 'Quality', 
+            'Debt': 'Quality', 
+            'Equity': 'Quality',
+            'Liabilities': 'Quality', 
+            'CF': 'Quality', 
+            'FwdCF': 'Quality',
+            'EbitMargin': 'Profitability', 
+            'EbitdaMargin': 'Profitability',
+            'NetMargin': 'Profitability', 
+            'FwdEBITDAMargin': 'Profitability',
+            'FwdNetMargin': 'Profitability', 
+            'EBIT': 'Profitability',
+            'EBITDA': 'Profitability', 
+            'FwdEBITDA': 'Profitability',
+            'EPS': 'Profitability', 
+            'Earnings': 'Profitability',
+            'FwdEarnings': 'Profitability', 
+            'ROE': 'Profitability',
+            'Fwd_ROE': 'Profitability', 
+            'Return_Capital': 'Profitability',
+            'ConsensusSalesGrowth': 'Profitability', 
+            'ConsensusEbitdaGrowth': 'Profitability',
+            'ConsensusEarningsGrowth': 'Profitability', 
+            'ConsensusCashFlowGrowth': 'Profitability',
+            'RollingEarnings': 'Momentum', 
+            'FwdRollingEarnings': 'Momentum',
+            'CumFlow': 'Momentum', 
+            'Flows': 'Momentum',
+            'Market_Cap': 'Momentum', 
+            'EV': 'Momentum', 
+            'Revenue': 'Momentum',
+            'FwdRevenue': 'Quality', 
+            'Price': 'Momentum', 
+            'Assets': 'Quality',
+            'RollingVol': 'Momentum', 
+            'Ten_Year': 'Macro',
+            'SI': 'Momentum', 
+            'SI_Ratio': 'Momentum',
+            'GDP': 'Macro', 
+            'M2': 'Macro'
+        }
+        
+        self.factor_direction ={
+             # VALUATION FACTORS (Lower multiples = better, so INVERT)
+             'PE': -1,                    # Lower P/E is cheaper/better
+             'Fwd_PE': -1,               # Lower forward P/E is better
+             'PB': -1,                   # Lower P/B is cheaper
+             'PS': -1,                   # Lower P/S is cheaper
+             'Fwd_PS': -1,               # Lower forward P/S is better
+             'PCF': -1,                  # Lower P/CF is cheaper
+             'Fwd_PCF': -1,              # Lower forward P/CF is better
+             'EV_EBIT': -1,              # Lower EV/EBIT is cheaper
+             'EV_EBITDA': -1,            # Lower EV/EBITDA is cheaper
+             'Fwd_EV_EBITDA': -1,        # Lower forward EV/EBITDA is better
+             'DVD': -1,                  # Lower dividend discount is better (higher yield)
+             'Fwd_DVD': -1,              # Lower forward dividend discount is better
+             
+             # YIELD FACTORS (Higher yields = better, so KEEP)
+             'EarningsYieldTTM': 1,      # Higher earnings yield is better
+             'EarningsYieldFWD': 1,      # Higher forward earnings yield is better
+             'CashFlowYieldTTM': 1,      # Higher cash flow yield is better
+             'CashFlowYieldFWD': 1,      # Higher forward cash flow yield is better
+             
+             # YIELD SPREADS (Higher spreads = better compensation, so KEEP)
+             'EarningsYieldTTMSpread': 1,
+             'EarningsYieldFWDSpread': 1,
+             'CashFlowYieldTTMSpread': 1,
+             'CashFlowYieldFWDSpread': 1,
+             'DvdYieldTTMSpread': 1,
+             'DvdYieldFWDSpread': 1,
+             
+             # QUALITY FACTORS (Mixed - depends on specific metric)
+             'ROE': 1,                   # Higher ROE is better
+             'Fwd_ROE': 1,               # Higher forward ROE is better
+             'Return_Capital': 1,        # Higher return on capital is better
+             'Debt_to_Equity': -1,       # Lower D/E ratio is better (less leverage risk)
+             'Net_Debt_Ebitda': -1,      # Lower net debt/EBITDA is better (less leverage)
+             'AssetsEquity': -1,         # Lower assets/equity could mean less leverage
+             'Assets': 1,                # More assets could be good (size/scale)
+             'Debt': -1,                 # Less absolute debt is generally better
+             'Equity': 1,                # More equity is generally better
+             'Liabilities': -1,          # Fewer liabilities is better
+             'CF': 1,                    # Higher cash flow is better
+             'FwdCF': 1,                 # Higher forward cash flow is better
+             
+             # PROFITABILITY FACTORS (Higher margins/profits = better, so KEEP)
+             'EbitMargin': 1,            # Higher EBIT margin is better
+             'EbitdaMargin': 1,          # Higher EBITDA margin is better
+             'NetMargin': 1,             # Higher net margin is better
+             'FwdEBITDAMargin': 1,       # Higher forward EBITDA margin is better
+             'FwdNetMargin': 1,          # Higher forward net margin is better
+             'EBIT': 1,                  # Higher EBIT is better
+             'EBITDA': 1,                # Higher EBITDA is better
+             'FwdEBITDA': 1,             # Higher forward EBITDA is better
+             'EPS': 1,                   # Higher EPS is better
+             'Earnings': 1,              # Higher earnings is better
+             'FwdEarnings': 1,           # Higher forward earnings is better
+             
+             # MOMENTUM FACTORS (Higher growth = better, so KEEP)
+             'ConsensusSalesGrowth': 1,      # Higher sales growth is better
+             'ConsensusEbitdaGrowth': 1,     # Higher EBITDA growth is better
+             'ConsensusEarningsGrowth': 1,   # Higher earnings growth is better
+             'ConsensusCashFlowGrowth': 1,   # Higher cash flow growth is better
+             'RollingEarnings': 1,           # Higher rolling earnings growth is better
+             'FwdRollingEarnings': 1,        # Higher forward rolling earnings is better
+             'CumFlow': 1,                   # Positive cumulative flows are better
+             'Flows': 1,                     # Positive flows are better
+             
+             # SIZE FACTORS (Depends on investment philosophy - assume larger is better for liquidity)
+             'Market_Cap': 1,            # Larger market cap (more liquidity, stability)
+             'EV': 1,                    # Larger enterprise value
+             'Revenue': 1,               # Higher revenue (scale)
+             'FwdRevenue': 1,            # Higher forward revenue
+             'Price': 1,                 # Price itself is neutral, but momentum positive
+             
+             # RISK FACTORS (Lower risk = better, so INVERT)
+             'RollingVol': -1,           # Lower volatility is better (less risky)
+             'Ten_Year': 1,              # Higher bond yields could mean higher risk premiums
+             
+             # SENTIMENT FACTORS (High short interest = negative sentiment, so INVERT)
+             'SI': -1,                   # Lower short interest is better
+             'SI_Ratio': -1,             # Lower short interest ratio is better
+             
+             # MACRO FACTORS (Higher growth = better, so KEEP)
+             'GDP': 1,                   # Higher GDP growth is better
+             'M2': 1,                    # Money supply growth can be positive for assets
+         }
+        
+        
+        self.window = 63
+        
+    def calculate_zscore(df: pd.DataFrame, window: int) -> pd.DataFrame:
+        """Rolling z-score with 63-day window."""
+        
+        dates = df.index[window:] # The dates to evaluate
+        
+        return_df=pd.DataFrame()
+    
+        for date in dates:
+            df_data = df.loc[:date] # slicing df up to the last date of evaluation
+            mu = df_data.iloc[:-1].mean() # mean calculated excluding the last observation
+            std = df_data.iloc[:-1].std() # std calculated excluding the last observation
+            x=df_data.iloc[-1] # Last observation
+        
+            return_df= pd.concat([return_df, (x-mu)/std], axis = 1) 
+            
+        return_df.columns = dates
+            
+        return return_df.T
+    
+    def calculate_absolute_percentile(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Historical percentile rank for each country."""
+        return df.rank(pct=True, method='average')
+    
+    def calculate_relative_ranking(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Cross-sectional rank at each date."""
+        return df.rank(axis=1, pct=True, method='average')
+    
+    def calculate_delta_percentile(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Percentile of 63-day percent changes."""
+        pct_change = df.pct_change(periods=self.window)
+        return pct_change.rank(pct=True, method='average')
+    
+    def transform_all(self, factor_dfs: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, pd.DataFrame]]:
+        """
+        Apply all transformations to factor dataframes.
+        
+        Returns:
+            Dict with structure: {factor_name: {metric_type: df}}
+        """
+        results = {}
+        
+        for factor_name, df in factor_dfs.items():
+            results[factor_name] = {
+                'zscore': self.calculate_zscore(df),
+                'absolute_pct': self.calculate_absolute_percentile(df),
+                'relative_rank': self.calculate_relative_ranking(df),
+                'delta_pct': self.calculate_delta_percentile(df)
+            }
+            
+        return results
+
+
+
+
+
+#%%
+
+try_df= dataFrames['PE']
+try_df.iloc[:-1]
+
+#%%
+def calculate_zscore(df: pd.DataFrame, window: int) -> pd.DataFrame:
+    """Rolling z-score with 63-day window."""
+    
+    dates = df.index[window:] # The dates to evaluate
+    
+    return_df=pd.DataFrame()
+
+    for date in dates:
+        df_data = df.loc[:date] # slicing df up to the last date of evaluation
+        df_data.iloc[-1]
+    
+    
+    
+        return_df= pd.concat([return_df, (x-mu)/std], axis = 1) 
+        
+    return_df.columns = dates
+        
+    return return_df.T
+        
+        
+factor= FactorTransformer()
+
+factor.calculate_absolute_percentile(try_df)
+
+#%%
+
+try_df
+try_df.rank(axis=0).iloc[-1]/try_df.rank(axis=0)
+#try_df.rank(axis=0,method='average', pct=True)
+
+
+
+
+#%%
+
+try_df.index[63:]
+
+
+
 
 
 #%%
