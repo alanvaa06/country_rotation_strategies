@@ -696,7 +696,7 @@ class QuantMetricsTransformer:
             # SIZE FACTORS
             'Market_Cap': 'Momentum', 
             'EV': 'Momentum', 
-            'Revenue': 'Quality',
+            'Revenue': 'Momentum',
             'FwdRevenue': 'Quality', 
             'Price': 'Momentum', 
             'Assets': 'Quality',
