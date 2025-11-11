@@ -27,10 +27,10 @@ warnings.filterwarnings('ignore')
 os.chdir('D:/Users/avazquez/OneDrive - valmexcasabolsa/Documents/QuantModels/country_rotation')
 
 # Import all functions from the function module
+
 import function_module as fm
 
 warnings.filterwarnings('ignore')
-
 
 #%%
 def run_inputs():
@@ -264,11 +264,11 @@ class FactorTransformer:
             'Price': 'Momentum', 
             'Assets': 'Quality',
             'RollingVol': 'Momentum', 
-            'Ten_Year': 'Macro',
+            'Ten_Year': 'Momentum',
             'SI': 'Momentum', 
             'SI_Ratio': 'Momentum',
-            'GDP': 'Macro', 
-            'M2': 'Macro'
+            'GDP': 'Momentum', 
+            'M2': 'Momentum'
         }
         
         self.factor_direction ={
@@ -478,10 +478,130 @@ class FactorTransformer:
             final_factor_score = weighted_df.groupby(level=1, axis=1).sum()
     
             final_scores[factor_name] = final_factor_score
+            
+        self.weighted_average_scores = final_scores
     
         return final_scores
+    
+        
+    def aggregate_by_category(self, 
+                             weighted_scores: Dict[str, pd.DataFrame]
+                             ) -> tuple[Dict[str, pd.DataFrame], Dict[str, pd.DataFrame]]:
+        """
+        Aggregates factor scores into category-level scores (Valuation, Quality, Momentum, etc.).
+        
+        Args:
+            weighted_scores: Output from calculate_weighted_average. 
+                            Dict with structure: {factor_name: final_score_df}
+                            Each DataFrame has dates as index, countries as columns
+        
+        Returns:
+            Tuple of two dictionaries:
+            1. {category_name: aggregated_score_df} - Category scores with countries as columns
+            2. {country_name: category_scores_df} - Country scores with categories as columns
+        """
+        
+        category_factors = {}
+        
+        # Group factors by their category
+        for factor_name, score_df in weighted_scores.items():
+            category = self.factor_map.get(factor_name)
+            
+            if category is None:
+                print(f"Warning: Factor '{factor_name}' not found in factor_map. Skipping.")
+                continue
+            
+            if category not in category_factors:
+                category_factors[category] = []
+            
+            category_factors[category].append(score_df)
+        
+        # Calculate mean for each category
+        category_scores = {}
+        
+        for category, dfs in category_factors.items():
+            # Average across all factors in this category
+            # Align by index (dates) and columns (countries), then take mean
+            aligned_sum = dfs[0].copy() * 0  # Initialize with zeros, preserving structure
+            
+            for df in dfs:
+                aligned_sum = aligned_sum.add(df, fill_value=0)
+            
+            category_scores[category] = aligned_sum / len(dfs)
+        
+        # Create country-centric view
+        all_countries = set()
+        for df in category_scores.values():
+            all_countries.update(df.columns)
+        
+        all_countries = sorted(list(all_countries))  # Sort for consistency
+        
+        print(f"Debug: Number of unique countries found: {len(all_countries)}")
+        
+        country_scores = {}
+        
+        for country in all_countries:
+            country_data = {}
+            for category, df in category_scores.items():
+                if country in df.columns:
+                    country_data[category] = df[country]
+                else:
+                    # Fill with NaN if country not in this category
+                    country_data[category] = pd.Series(index=df.index, dtype=float)
+            
+            country_scores[country] = pd.DataFrame(country_data)
+        
+        self.category_scores = category_scores
+        self.country_scores = country_scores
+        
+        return category_scores, country_scores
 
-
+    def calculate_composite_score(self, 
+                                  category_weights: Dict[str, float]
+                                  ) -> tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
+        """
+        Calculates composite scores and category contributions for each country.
+        
+        Args:
+            category_weights: Dict of category weights, e.g., 
+                             {'Quality': 0.25, 'Valuation': 0.25, 'Profitability': 0.1, 'Momentum': 0.4}
+        
+        Returns:
+            Tuple of:
+            1. DataFrame with composite scores (index: dates, columns: countries)
+            2. Dict[country_name: contribution_df] showing each category's contribution to composite score
+        """
+        
+        if not hasattr(self, 'country_scores'):
+            raise AttributeError("country_scores not found. Run aggregate_by_category() first.")
+        
+        # Optional: Check if weights sum to 1.0
+        if not np.isclose(sum(category_weights.values()), 1.0):
+            print(f"Warning: Category weights do not sum to 1.0 (Sum={sum(category_weights.values())}).")
+        
+        composite_scores = {}
+        contribution_dict = {}
+        
+        for country, scores_df in self.country_scores.items():
+            # Apply weights to each category
+            weighted_scores = scores_df * pd.Series(category_weights)
+            
+            # Calculate composite score (sum of weighted categories)
+            composite_scores[country] = weighted_scores.sum(axis=1)
+            
+            # Calculate contributions (weighted score / total weighted score)
+            total_weighted = weighted_scores.sum(axis=1)
+            contributions = weighted_scores.div(total_weighted, axis=0)
+            
+            contribution_dict[country] = contributions
+        
+        # Convert composite scores dict to DataFrame
+        composite_df = pd.DataFrame(composite_scores)
+        
+        self.composite_scores = composite_df
+        self.category_contributions = contribution_dict
+        
+        return composite_df, contribution_dict
 
 #%%
 
@@ -494,28 +614,27 @@ weights = {
         
 #%%        
 factor= FactorTransformer()
-#%%
 results= factor.transform_all(dataFrames)
-#%%
 final_scores= factor.calculate_weighted_average(results, weights)
+#%%
+
+category_scores, country_scores = factor.aggregate_by_category(final_scores)
 
 #%%
-for 
-final_scores
 
+category_weights = {
+'Quality': 0.25,
+'Valuation': 0.1,
+'Profitability': 0.35,
+'Momentum': 0.3
+}
 
+#%%
 
+composite_scores, category_contributions = factor.calculate_composite_score(category_weights)
+#%%
 
-
-
-
-
-
-
-
-
-
-
+final_scores['Assets']
 
 
 
