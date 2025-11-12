@@ -31,7 +31,8 @@ os.chdir('D:/Users/avazquez/OneDrive - valmexcasabolsa/Documents/QuantModels/cou
 import function_module as fm
 
 warnings.filterwarnings('ignore')
-
+#%%
+plt.style.use('seaborn-v0_8')
 #%%
 def run_inputs():
     """
@@ -607,17 +608,18 @@ class FactorTransformer:
         
         return composite_df, contribution_dict
 
-    def normalize_and_rebase_contributions(self) -> tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
+    def normalize_and_rebase_contributions(self) -> tuple[pd.DataFrame, Dict[str, pd.DataFrame], Dict[str, pd.DataFrame]]:
+        
         """
         Normalizes composite scores cross-sectionally (min-max normalization) and rebases 
         category contributions to sum to the normalized score for each country-date.
-        
         Returns:
             Tuple of:
             1. DataFrame with normalized composite scores (index: dates, columns: countries)
                Each date is normalized cross-sectionally: (value - min) / (max - min)
             2. Dict[country_name: rebased_contributions_df] where contributions sum to 
                the normalized score (instead of 1.0) for each date
+            3. Dict[category_name: rebased_contributions_df] with countries as columns
         """
         
         if not hasattr(self, 'composite_scores'):
@@ -639,11 +641,11 @@ class FactorTransformer:
                 normalized_scores.loc[date] = (date_values - min_val) / (max_val - min_val)
             else:
                 print(f"WARNING: All composite scores are identical on {date}. "
-                  f"Value: {min_val:.6f}. Assigning 0.5 to all countries.")
-                normalized_scores.loc[date] = 0.5  # All values same, assign middle value
+                      f"Value: {min_val:.6f}. Assigning 0.5 to all countries.")
+                normalized_scores.loc[date] = 0.5
         
-        # Step 2: Rebase category contributions
-        rebased_contributions = {}
+        # Step 2: Rebase category contributions by country
+        rebased_contributions_by_country = {}
         
         for country in self.category_contributions.keys():
             original_contributions = self.category_contributions[country].copy()
@@ -655,14 +657,204 @@ class FactorTransformer:
                     norm_score = normalized_scores.loc[date, country]
                     rebased.loc[date] = original_contributions.loc[date] * norm_score
             
-            rebased_contributions[country] = rebased
+            rebased_contributions_by_country[country] = rebased
+        
+        # Step 3: Pivot to category-centric view
+        rebased_contributions_by_factor = {}
+        
+        # Get all unique categories from any country's contribution dataframe
+        sample_country = list(rebased_contributions_by_country.keys())[0]
+        all_categories = rebased_contributions_by_country[sample_country].columns.tolist()
+        
+        for category in all_categories:
+            category_data = {}
+            for country, contrib_df in rebased_contributions_by_country.items():
+                if category in contrib_df.columns:
+                    category_data[country] = contrib_df[category]
+            
+            rebased_contributions_by_factor[category] = pd.DataFrame(category_data)
         
         # Store results
         self.normalized_scores = normalized_scores
-        self.rebased_contributions = rebased_contributions
+        self.rebased_contributions_by_country = rebased_contributions_by_country
+        self.rebased_contributions_by_factor = rebased_contributions_by_factor
         
-        return normalized_scores, rebased_contributions
+        return normalized_scores, rebased_contributions_by_country, rebased_contributions_by_factor
     
+    def calculate_factor_contribution_changes(self, 
+                                             period: int = 5
+                                             ) -> Dict[str, pd.DataFrame]:
+        """
+        Calculates the change in rebased factor contributions over a specified period.
+        
+        Args:
+            period: Number of working days between measurements (default: 5)
+                    Changes are calculated strictly every N days, not rolling.
+        
+        Returns:
+            Dict[category_name: changes_df] with differences in contributions across countries
+        """
+        
+        if not hasattr(self, 'rebased_contributions_by_factor'):
+            raise AttributeError("rebased_contributions_by_factor not found. "
+                               "Run normalize_and_rebase_contributions() first.")
+        
+        factor_changes = {}
+        change_dates = None
+        
+        for category, contrib_df in self.rebased_contributions_by_factor.items():
+            # Get all dates
+            all_dates = contrib_df.index
+            
+            # Select dates at every 'period' interval
+            selected_dates = all_dates[::period]
+            
+            # Calculate differences between consecutive selected dates
+            changes = contrib_df.loc[selected_dates].diff()
+            
+            # Remove first row (NaN from diff)
+            changes = changes.iloc[1:]
+            
+            factor_changes[category] = changes
+            
+            # Store dates (same for all categories)
+            if change_dates is None:
+                change_dates = changes.index.tolist()
+        
+        # Store results
+        self.factor_contribution_changes = factor_changes
+        self.change_dates = change_dates
+        
+        print(f"Calculated {len(change_dates)} change periods with {period}-day intervals.")
+        print(f"First change date: {change_dates[0]}, Last change date: {change_dates[-1]}")
+        
+        return factor_changes
+    
+            
+    def plot_factor_contributions(self, 
+                                  date: str = None,
+                                  figsize: tuple = (12, 6)
+                                  ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Plots factor contributions and changes as stacked bar charts for a specific date.
+        
+        Args:
+            date: Date to plot in string format (e.g., '2024-01-15'). 
+                  If None, uses the last available date.
+            figsize: Figure size (default: (12, 6))
+        
+        Returns:
+            Tuple of:
+            1. DataFrame with normalized scores (index: categories, columns: countries)
+            2. DataFrame with contribution changes (index: categories, columns: countries)
+        """
+        
+        if not hasattr(self, 'rebased_contributions_by_factor'):
+            raise AttributeError("rebased_contributions_by_factor not found. "
+                               "Run normalize_and_rebase_contributions() first.")
+        
+        if not hasattr(self, 'factor_contribution_changes'):
+            raise AttributeError("factor_contribution_changes not found. "
+                               "Run calculate_factor_contribution_changes() first.")
+        
+        # Get the date to plot
+        sample_category = list(self.rebased_contributions_by_factor.keys())[0]
+        available_dates = self.rebased_contributions_by_factor[sample_category].index
+        
+        if date is None:
+            plot_date = available_dates[-1]
+        else:
+            plot_date = pd.to_datetime(date)
+            if plot_date not in available_dates:
+                raise ValueError(f"Date {date} not found in rebased contributions. "
+                               f"Available range: {available_dates[0]} to {available_dates[-1]}")
+        
+        # Check if date exists in change_dates
+        if plot_date not in self.change_dates:
+            raise ValueError(f"Date {plot_date.strftime('%Y-%m-%d')} not found in change_dates. "
+                           f"Available change dates: {len(self.change_dates)} dates from "
+                           f"{self.change_dates[0].strftime('%Y-%m-%d')} to {self.change_dates[-1].strftime('%Y-%m-%d')}")
+        
+        # Extract data for the specific date
+        contributions_data = {}
+        changes_data = {}
+        
+        for category in self.rebased_contributions_by_factor.keys():
+            contributions_data[category] = self.rebased_contributions_by_factor[category].loc[plot_date]
+            changes_data[category] = self.factor_contribution_changes[category].loc[plot_date]
+        
+        # Create DataFrames (index: categories, columns: countries)
+        contributions_df = pd.DataFrame(contributions_data).T
+        changes_df = pd.DataFrame(changes_data).T
+        
+        # Sort countries by total normalized score (descending)
+        total_scores = contributions_df.sum(axis=0)
+        sorted_countries = total_scores.sort_values(ascending=False).index
+        
+        contributions_df = contributions_df[sorted_countries]
+        changes_df = changes_df[sorted_countries]
+        
+        # Define colors for categories
+        category_colors = {
+            list(contributions_df.index)[0]: '#1F3864',
+            list(contributions_df.index)[1]: '#38E2E6',
+            list(contributions_df.index)[2]: '#CCBD66',
+            list(contributions_df.index)[3]: '#0099FF'
+        }
+        
+        # Create figure with subplots
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True, 
+                                         gridspec_kw={'height_ratios': [2, 1]})
+        
+        # Plot 1: Stacked bar chart of contributions
+        countries = contributions_df.columns
+        x_pos = np.arange(len(countries))
+        bottom1 = np.zeros(len(countries))
+        
+        for category in contributions_df.index:
+            values = contributions_df.loc[category].values
+            ax1.bar(x_pos, values, bottom=bottom1, 
+                   label=category, color=category_colors[category])
+            bottom1 += values
+        
+        ax1.set_ylabel('Normalized Score', fontsize=10)
+        ax1.set_title(f'Normalized Equity Ranking - {plot_date.strftime("%Y-%m-%d")}', 
+                     fontsize=12, fontweight='bold')
+        ax1.grid(axis='y', alpha=0.3, linestyle='--')
+        ax1.set_xlim(-0.5, len(countries) - 0.5)
+        
+        # Plot 2: Stacked bar chart of changes
+        bottom2 = np.zeros(len(countries))
+        
+        for category in changes_df.index:
+            values = changes_df.loc[category].values
+            ax2.bar(x_pos, values, bottom=bottom2, 
+                   label=category, color=category_colors[category])
+            bottom2 += values
+        
+        ax2.set_ylabel('Contribution Changes', fontsize=10)
+        ax2.set_xlabel('Countries', fontsize=10)
+        ax2.set_xticks(x_pos)
+        ax2.set_xticklabels(countries, rotation=45, ha='right')
+        ax2.axhline(y=0, color='black', linestyle='-', linewidth=0.8)
+        ax2.grid(axis='y', alpha=0.3, linestyle='--')
+        ax2.set_xlim(-0.5, len(countries) - 0.5)
+        
+        # Add legend outside plot area
+        handles, labels = ax1.get_legend_handles_labels()
+        fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5), 
+                  frameon=False, fontsize=10)
+        
+        plt.tight_layout()
+        #plt.savefig('equity_ranking.png', bbox_inches='tight', dpi=300)
+        plt.show()
+        
+        # Store DataFrames
+        self.plot_contributions_df = contributions_df
+        self.plot_changes_df = changes_df
+        
+        return contributions_df, changes_df            
+                
 #%%
 
 weights = {
@@ -672,14 +864,6 @@ weights = {
 'delta_pct': 0.4
 }
         
-#%%        
-factor= FactorTransformer()
-results= factor.transform_all(dataFrames)
-final_scores= factor.calculate_weighted_average(results, weights)
-category_scores, country_scores = factor.aggregate_by_category(final_scores)
-
-#%%
-
 category_weights = {
 'Quality': 0.25,
 'Valuation': 0.1,
@@ -687,12 +871,14 @@ category_weights = {
 'Momentum': 0.3
 }
 
-#%%
-
+factor= FactorTransformer()
+results= factor.transform_all(dataFrames)
+final_scores= factor.calculate_weighted_average(results, weights)
+category_scores, country_scores = factor.aggregate_by_category(final_scores)
 composite_scores, category_contributions = factor.calculate_composite_score(category_weights)
+normalized_scores, rebased_contributions_by_country, rebased_contributions_by_factor = factor.normalize_and_rebase_contributions()
+factor_changes = factor.calculate_factor_contribution_changes()
 #%%
-
-normalized_scores, rebased_contributions = factor.normalize_and_rebase_contributions()
 
 for country in normalized_scores.columns:
     normalized_scores[country].plot(title=country.upper(), figsize=(12,6))
@@ -700,7 +886,5 @@ for country in normalized_scores.columns:
 
 
 #%%
-
-rebased_contributions['Asia']
-
-
+plt.style.use('seaborn-v0_8')
+factor.plot_factor_contributions()
