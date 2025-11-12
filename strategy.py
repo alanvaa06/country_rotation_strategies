@@ -375,6 +375,10 @@ class FactorTransformer:
     def transform_all(self, 
                       factor_dfs: Dict[str, pd.DataFrame], 
                       ) -> Dict[str, Dict[str, pd.DataFrame]]:
+        
+        ## Here we can filter countries.
+        
+        
         """
         Apply all transformations to factor dataframes.
         
@@ -603,6 +607,62 @@ class FactorTransformer:
         
         return composite_df, contribution_dict
 
+    def normalize_and_rebase_contributions(self) -> tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
+        """
+        Normalizes composite scores cross-sectionally (min-max normalization) and rebases 
+        category contributions to sum to the normalized score for each country-date.
+        
+        Returns:
+            Tuple of:
+            1. DataFrame with normalized composite scores (index: dates, columns: countries)
+               Each date is normalized cross-sectionally: (value - min) / (max - min)
+            2. Dict[country_name: rebased_contributions_df] where contributions sum to 
+               the normalized score (instead of 1.0) for each date
+        """
+        
+        if not hasattr(self, 'composite_scores'):
+            raise AttributeError("composite_scores not found. Run calculate_composite_score() first.")
+        
+        if not hasattr(self, 'category_contributions'):
+            raise AttributeError("category_contributions not found. Run calculate_composite_score() first.")
+        
+        # Step 1: Normalize composite scores cross-sectionally for each date
+        normalized_scores = self.composite_scores.copy()
+        
+        for date in normalized_scores.index:
+            date_values = normalized_scores.loc[date]
+            min_val = date_values.min()
+            max_val = date_values.max()
+            
+            # Min-max normalization
+            if max_val != min_val:  # Avoid division by zero
+                normalized_scores.loc[date] = (date_values - min_val) / (max_val - min_val)
+            else:
+                print(f"WARNING: All composite scores are identical on {date}. "
+                  f"Value: {min_val:.6f}. Assigning 0.5 to all countries.")
+                normalized_scores.loc[date] = 0.5  # All values same, assign middle value
+        
+        # Step 2: Rebase category contributions
+        rebased_contributions = {}
+        
+        for country in self.category_contributions.keys():
+            original_contributions = self.category_contributions[country].copy()
+            rebased = original_contributions.copy()
+            
+            # For each date, multiply contributions by the normalized score
+            for date in rebased.index:
+                if date in normalized_scores.index and country in normalized_scores.columns:
+                    norm_score = normalized_scores.loc[date, country]
+                    rebased.loc[date] = original_contributions.loc[date] * norm_score
+            
+            rebased_contributions[country] = rebased
+        
+        # Store results
+        self.normalized_scores = normalized_scores
+        self.rebased_contributions = rebased_contributions
+        
+        return normalized_scores, rebased_contributions
+    
 #%%
 
 weights = {
@@ -616,8 +676,6 @@ weights = {
 factor= FactorTransformer()
 results= factor.transform_all(dataFrames)
 final_scores= factor.calculate_weighted_average(results, weights)
-#%%
-
 category_scores, country_scores = factor.aggregate_by_category(final_scores)
 
 #%%
@@ -634,8 +692,15 @@ category_weights = {
 composite_scores, category_contributions = factor.calculate_composite_score(category_weights)
 #%%
 
-final_scores['Assets']
+normalized_scores, rebased_contributions = factor.normalize_and_rebase_contributions()
+
+for country in normalized_scores.columns:
+    normalized_scores[country].plot(title=country.upper(), figsize=(12,6))
+    plt.show()
 
 
+#%%
+
+rebased_contributions['Asia']
 
 
