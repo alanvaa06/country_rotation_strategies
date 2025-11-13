@@ -199,7 +199,7 @@ class FactorTransformer:
     Transforms factor data into standardized metrics.
     """
     
-    def __init__(self):
+    def __init__(self, country_filter: str = 'World'):
         
         self.factor_map = {
             'PE': 'Valuation', 
@@ -341,6 +341,130 @@ class FactorTransformer:
          }
         
         
+        self.DM = [
+            "United States",
+            "Japan",
+            "United Kingdom",
+            "Canada",
+            "France",
+            "Switzerland",
+            "Germany",
+            "Australia",
+            "Netherlands",
+            "Ireland",
+            "Denmark",
+            "Sweden",
+            "Spain",
+            "Hong Kong",
+            "Italy",
+            "Singapore",
+            "Finland",
+            "Belgium",
+            "Norway"
+        ]
+
+        self.EM = [
+            "India",
+            "Taiwan",
+            "South Korea",
+            "Brazil",
+            "Mexico",
+            "South Africa",
+            "Israel",
+            "Indonesia",
+            "Thailand",
+            "Malaysia",
+            "Poland",
+            "Chile",
+            "Peru",
+            "Colombia"
+        ]
+        
+        self.Asia = [
+            "Japan",
+            "China",
+            "India",
+            "Taiwan",
+            "Australia",
+            "South Korea",
+            "Hong Kong",
+            "Singapore",
+            "Israel",
+            "Indonesia",
+            "Thailand",
+            "Malaysia"
+        ]
+        
+        self.Europe = [
+            "United Kingdom",
+            "France",
+            "Switzerland",
+            "Germany",
+            "Netherlands",
+            "Ireland",
+            "Denmark",
+            "Sweden",
+            "Spain",
+            "Italy",
+            "Finland",
+            "Belgium",
+            "Norway",
+            "Poland"
+        ]
+        
+        self.LatAm = [
+            "Brazil",
+            "Mexico",
+            "Chile",
+            "Peru",
+            "Colombia"
+        ]
+        
+        self.World = [
+            "United States",
+            "Japan",
+            "United Kingdom",
+            "Canada",
+            "France",
+            "Switzerland",
+            "China",
+            "Germany",
+            "India",
+            "Taiwan",
+            "Australia",
+            "Netherlands",
+            "South Korea",
+            "Ireland",
+            "Denmark",
+            "Sweden",
+            "Spain",
+            "Hong Kong",
+            "Italy",
+            "Brazil",
+            "Singapore",
+            "Mexico",
+            "South Africa",
+            "Finland",
+            "Belgium",
+            "Israel",
+            "Indonesia",
+            "Thailand",
+            "Norway",
+            "Malaysia",
+            "Poland",
+            "Chile",
+            "Peru",
+            "Colombia"
+        ]
+        
+        
+        # Add filter validation
+        valid_filters = ['DM', 'EM', 'Asia', 'Europe', 'LatAm', 'World']
+        if country_filter not in valid_filters:
+            raise ValueError(f"Invalid country_filter. Choose from: {valid_filters}")
+        
+        self.country_filter = country_filter
+        self.selected_countries = getattr(self, country_filter)
         self.window = 63
 
     def calculate_zscore(self,df: pd.DataFrame) -> pd.DataFrame:
@@ -386,9 +510,23 @@ class FactorTransformer:
         Returns:
             Dict with structure: {factor_name: {metric_type: df}}
         """
+        
+        # At the start, filter each dataframe to selected countries
+        filtered_factor_dfs = {}
+    
+        for factor_name, df in factor_dfs.items():
+            # Get intersection of available columns and selected countries
+            available_countries = [c for c in self.selected_countries if c in df.columns]
+            
+            if len(available_countries) == 0:
+                print(f"Warning: No selected countries found in {factor_name}. Skipping.")
+                continue
+                
+            filtered_factor_dfs[factor_name] = df[available_countries]
+        
         results = {}
         
-        for factor_name, df in factor_dfs.items():
+        for factor_name, df in filtered_factor_dfs.items():
             
             direction = self.factor_direction.get(factor_name, 1) # Get the direction for this factor. Default to 1 (high=good) if not specified.
                 
@@ -871,7 +1009,8 @@ category_weights = {
 'Momentum': 0.3
 }
 
-factor= FactorTransformer()
+factor= FactorTransformer('DM')
+#%%
 results= factor.transform_all(dataFrames)
 final_scores= factor.calculate_weighted_average(results, weights)
 category_scores, country_scores = factor.aggregate_by_category(final_scores)
