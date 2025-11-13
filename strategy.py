@@ -1009,21 +1009,27 @@ category_weights = {
 'Momentum': 0.3
 }
 
-factor= FactorTransformer('DM')
-#%%
+factor= FactorTransformer('World')
 results= factor.transform_all(dataFrames)
 final_scores= factor.calculate_weighted_average(results, weights)
 category_scores, country_scores = factor.aggregate_by_category(final_scores)
 composite_scores, category_contributions = factor.calculate_composite_score(category_weights)
 normalized_scores, rebased_contributions_by_country, rebased_contributions_by_factor = factor.normalize_and_rebase_contributions()
-factor_changes = factor.calculate_factor_contribution_changes()
-#%%
+factor_changes = factor.calculate_factor_contribution_changes(period=5)
 
 for country in normalized_scores.columns:
     normalized_scores[country].plot(title=country.upper(), figsize=(12,6))
     plt.show()
-
+#%%
+factor.plot_factor_contributions('2024-04-17')
 
 #%%
-plt.style.use('seaborn-v0_8')
-factor.plot_factor_contributions()
+for date in factor.change_dates[-10:]:
+    factor.plot_factor_contributions(date)
+
+#%%
+    
+    
+    
+    
+    
