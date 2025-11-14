@@ -190,7 +190,9 @@ print(f"   • processed_data: Same as dataFrames (alias)")
 #Quick data exploration
 fm.explore_data(dataFrames, regions_dict)
 
+#%%
 
+factor_dfs = dataFrames.copy()
  
  #%%
 
@@ -992,8 +994,228 @@ class FactorTransformer:
         self.plot_changes_df = changes_df
         
         return contributions_df, changes_df            
+    
+    def analyze_factor_redundancy(self, 
+                                  distance_threshold: float = 0.3,
+                                  linkage_method: str = 'ward',
+                                  selection_criterion: str = 'coverage') -> Dict:
+        """
+        Analyzes redundancy between factors using hierarchical clustering on correlations.
+        
+        Args:
+            distance_threshold: Threshold for cutting dendrogram (0-1). Lower = fewer, more distinct factors.
+            linkage_method: Method for hierarchical clustering ('ward', 'average', 'complete', 'single')
+            selection_criterion: How to select representative from each cluster:
+                               'coverage' - Factor with most data availability
+                               'unique' - Factor with lowest correlation to other clusters
+                               'central' - Factor most correlated with its cluster members
+        
+        Returns:
+            Dict containing:
+            - 'correlation_matrix': DataFrame of factor correlations
+            - 'distance_matrix': Distance matrix used for clustering
+            - 'linkage': Linkage matrix for dendrogram
+            - 'clusters': Dict[cluster_id: list of factors]
+            - 'recommended_factors': List of selected factors
+            - 'selection_rationale': Dict[factor: reason for selection]
+        """
+        
+        if not hasattr(self, 'weighted_average_scores'):
+            raise AttributeError("weighted_average_scores not found. "
+                               "Run calculate_weighted_average() first.")
+        
+        from scipy.cluster.hierarchy import linkage, fcluster
+        from scipy.spatial.distance import squareform
+        
+        # Store threshold as class attribute for plotting
+        self.clustering_threshold = distance_threshold
+        
+        # Step 1: Calculate correlation matrix between all factors
+        factor_names = list(self.weighted_average_scores.keys())
+        n_factors = len(factor_names)
+        
+        correlation_matrix = pd.DataFrame(
+            np.zeros((n_factors, n_factors)),
+            index=factor_names,
+            columns=factor_names
+        )
+        
+        print(f"Calculating correlations for {n_factors} factors...")
+        
+        for i, factor1 in enumerate(factor_names):
+            for j, factor2 in enumerate(factor_names):
+                if i <= j:  # Only calculate upper triangle (symmetric)
+                    df1 = self.weighted_average_scores[factor1]
+                    df2 = self.weighted_average_scores[factor2]
+                    
+                    # Calculate correlation for each country, then average
+                    country_correlations = []
+                    for country in df1.columns:
+                        if country in df2.columns:
+                            # Drop NaN and calculate correlation
+                            combined = pd.DataFrame({
+                                'f1': df1[country],
+                                'f2': df2[country]
+                            }).dropna()
+                            
+                            if len(combined) > 10:  # Minimum data points
+                                corr = combined['f1'].corr(combined['f2'])
+                                if not np.isnan(corr):
+                                    country_correlations.append(corr)
+                    
+                    # Average correlation across countries
+                    avg_corr = np.mean(country_correlations) if country_correlations else 0
+                    correlation_matrix.loc[factor1, factor2] = avg_corr
+                    correlation_matrix.loc[factor2, factor1] = avg_corr
+        
+        # Step 2: Convert correlation to distance
+        # distance = 1 - |correlation|
+        distance_matrix = 1 - np.abs(correlation_matrix.values)
+        
+        # Step 3: Perform hierarchical clustering
+        # Convert to condensed distance matrix (upper triangle)
+        condensed_dist = squareform(distance_matrix, checks=False)
+        linkage_matrix = linkage(condensed_dist, method=linkage_method)
+        
+        # Step 4: Cut dendrogram to form clusters
+        cluster_labels = fcluster(linkage_matrix, t=distance_threshold, criterion='distance')
+        
+        # Organize factors by cluster
+        clusters = {}
+        for factor, cluster_id in zip(factor_names, cluster_labels):
+            if cluster_id not in clusters:
+                clusters[cluster_id] = []
+            clusters[cluster_id].append(factor)
+        
+        print(f"\nIdentified {len(clusters)} factor clusters:")
+        for cluster_id, factors in clusters.items():
+            print(f"  Cluster {cluster_id}: {len(factors)} factors - {factors[:3]}{'...' if len(factors) > 3 else ''}")
+        
+        # Step 5: Select representative factor from each cluster
+        recommended_factors = []
+        selection_rationale = {}
+        
+        for cluster_id, factors_in_cluster in clusters.items():
+            if len(factors_in_cluster) == 1:
+                selected = factors_in_cluster[0]
+                rationale = "Only factor in cluster"
+            
+            elif selection_criterion == 'coverage':
+                # Select factor with most data coverage
+                coverage_scores = {}
+                for factor in factors_in_cluster:
+                    df = self.weighted_average_scores[factor]
+                    coverage = df.notna().sum().sum() / (len(df) * len(df.columns))
+                    coverage_scores[factor] = coverage
+                selected = max(coverage_scores, key=coverage_scores.get)
+                rationale = f"Best data coverage: {coverage_scores[selected]:.2%}"
+            
+            elif selection_criterion == 'unique':
+                # Select factor with lowest average correlation to OTHER clusters
+                uniqueness_scores = {}
+                other_clusters_factors = [f for cid, flist in clusters.items() 
+                                         if cid != cluster_id for f in flist]
                 
+                for factor in factors_in_cluster:
+                    if other_clusters_factors:
+                        correlations = [abs(correlation_matrix.loc[factor, other_f]) 
+                                      for other_f in other_clusters_factors]
+                        uniqueness_scores[factor] = np.mean(correlations)
+                    else:
+                        uniqueness_scores[factor] = 0
+                
+                selected = min(uniqueness_scores, key=uniqueness_scores.get)
+                rationale = f"Most unique (avg corr to other clusters: {uniqueness_scores[selected]:.3f})"
+            
+            elif selection_criterion == 'central':
+                # Select factor most correlated with cluster members
+                centrality_scores = {}
+                for factor in factors_in_cluster:
+                    correlations = [abs(correlation_matrix.loc[factor, other_f]) 
+                                  for other_f in factors_in_cluster if other_f != factor]
+                    centrality_scores[factor] = np.mean(correlations) if correlations else 0
+                
+                selected = max(centrality_scores, key=centrality_scores.get)
+                rationale = f"Most central (avg corr within cluster: {centrality_scores[selected]:.3f})"
+            
+            else:
+                raise ValueError(f"Invalid selection_criterion: {selection_criterion}")
+            
+            recommended_factors.append(selected)
+            selection_rationale[selected] = rationale
+        
+        print(f"\nRecommended {len(recommended_factors)} factors:")
+        for factor in recommended_factors:
+            print(f"  {factor}: {selection_rationale[factor]}")
+        
+        # Store results
+        results = {
+            'correlation_matrix': correlation_matrix,
+            'distance_matrix': pd.DataFrame(distance_matrix, 
+                                            index=factor_names, 
+                                            columns=factor_names),
+            'linkage': linkage_matrix,
+            'clusters': clusters,
+            'recommended_factors': recommended_factors,
+            'selection_rationale': selection_rationale,
+            'factor_names': factor_names  # For dendrogram plotting
+        }
+        
+        self.redundancy_analysis = results
+        
+        return results
+    
+    
+    def plot_factor_dendrogram(self, 
+                               figsize: tuple = (14, 8),
+                               threshold_line: bool = True) -> None:
+        """
+        Plots dendrogram from factor redundancy analysis.
+        
+        Args:
+            figsize: Figure size
+            threshold_line: Whether to show the distance threshold line
+        """
+        
+        if not hasattr(self, 'redundancy_analysis'):
+            raise AttributeError("redundancy_analysis not found. "
+                               "Run analyze_factor_redundancy() first.")
+        
+        if not hasattr(self, 'clustering_threshold'):
+            raise AttributeError("clustering_threshold not found. "
+                               "Run analyze_factor_redundancy() first.")
+        
+        from scipy.cluster.hierarchy import dendrogram
+        
+        results = self.redundancy_analysis
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        dendro = dendrogram(
+            results['linkage'],
+            labels=results['factor_names'],
+            ax=ax,
+            leaf_rotation=90,
+            leaf_font_size=9
+        )
+        
+        ax.set_title('Factor Redundancy Dendrogram', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Factors', fontsize=11)
+        ax.set_ylabel('Distance (1 - |correlation|)', fontsize=11)
+        
+        if threshold_line:
+            ax.axhline(y=self.clustering_threshold, color='r', linestyle='--', 
+                      linewidth=2, label=f'Threshold = {self.clustering_threshold}')
+            ax.legend()
+        
+        plt.tight_layout()
+        plt.show()
+    
 #%%
+
+# ============================================
+# PHASE 1: INITIAL ANALYSIS (Full Factor Set)
+# ============================================
 
 weights = {
 'zscore': 0.25,
@@ -1009,27 +1231,108 @@ category_weights = {
 'Momentum': 0.3
 }
 
-factor= FactorTransformer('World')
-results= factor.transform_all(dataFrames)
-final_scores= factor.calculate_weighted_average(results, weights)
-category_scores, country_scores = factor.aggregate_by_category(final_scores)
-composite_scores, category_contributions = factor.calculate_composite_score(category_weights)
-normalized_scores, rebased_contributions_by_country, rebased_contributions_by_factor = factor.normalize_and_rebase_contributions()
-factor_changes = factor.calculate_factor_contribution_changes(period=5)
+#%%
+# Step 1: Initialize with all factors
+factor_transformer= FactorTransformer('World')
+
+# Step 2: Transform all factors
+factor_results = factor_transformer.transform_all(factor_dfs)
+
+# Step 3: Calculate weighted averages
+
+weighted_scores = factor_transformer.calculate_weighted_average(factor_results, weights)
+
+category_scores, country_scores = factor_transformer.aggregate_by_category(weighted_scores)
+
+composite_scores, contributions = factor_transformer.calculate_composite_score(category_weights)
+
+normalized_scores, rebased_by_country, rebased_by_factor = factor_transformer.normalize_and_rebase_contributions()
+#%%
+# Step 4: Analyze factor redundancy
+factor_redundancy_results = factor_transformer.analyze_factor_redundancy(
+    distance_threshold=0.5,
+    linkage_method='ward',
+    selection_criterion='unique'  # or 'unique' or 'central'
+)
+
+# Step 5: Visualize clusters
+factor_transformer.plot_factor_dendrogram()
+
+# Step 6: Review recommendations
+print("\nRecommended factors:")
+for factor in factor_redundancy_results['recommended_factors']:
+    category = factor_transformer.factor_map[factor]
+    print(f"  {factor} ({category}): {factor_redundancy_results['selection_rationale'][factor]}")
+
+
+#%%
+# ============================================
+# PHASE 2: FILTERED PIPELINE (Selected Factors)
+# ============================================
+
+# Step 7: Filter raw data to selected factors
+selected_factors = factor_redundancy_results['recommended_factors']
+filtered_factor_dfs = {
+    factor: df for factor, df in factor_dfs.items() 
+    if factor in selected_factors
+}
+
+
+
+#%%
+
+# Step 8: Re-initialize (optional, for clean slate)
+factor_transformer_reduced = FactorTransformer('World')
+
+# Step 9: Re-run entire pipeline with filtered factors
+factor_results_reduced = factor_transformer_reduced.transform_all(filtered_factor_dfs)
+
+weighted_scores_reduced = factor_transformer_reduced.calculate_weighted_average(
+    factor_results_reduced, 
+    weights
+)
+
+category_scores_reduced, country_scores_reduced = factor_transformer_reduced.aggregate_by_category(
+    weighted_scores_reduced
+)
+
+
+composite_scores_reduced, contributions_reduced = factor_transformer_reduced.calculate_composite_score(
+    category_weights
+)
+
+normalized_scores_reduced, rebased_by_country, rebased_by_factor = factor_transformer_reduced.normalize_and_rebase_contributions()
+
+factor_changes_reduced = factor_transformer_reduced.calculate_factor_contribution_changes(period=5)
+
+# Step 10: Plot results
+factor_transformer_reduced.plot_factor_contributions()
 
 for country in normalized_scores.columns:
     normalized_scores[country].plot(title=country.upper(), figsize=(12,6))
     plt.show()
-#%%
-factor.plot_factor_contributions('2024-04-17')
 
 #%%
-for date in factor.change_dates[-10:]:
-    factor.plot_factor_contributions(date)
 
-#%%
+# ============================================
+# PHASE 3: COMPARISON (Optional)
+# ============================================
+
+# Compare full vs. reduced factor set results
+comparison_date = factor_transformer.normalized_scores.index[-1]
+
+full_scores = factor_transformer.normalized_scores.loc[comparison_date].sort_values(ascending=False)
+reduced_scores = factor_transformer_reduced.normalized_scores.loc[comparison_date].sort_values(ascending=False)
+
+print("\nTop 10 countries - Full factor set:")
+print(full_scores.head(10))
+
+print("\nTop 10 countries - Reduced factor set:")
+print(reduced_scores.head(10))
+
+# Calculate rank correlation
+from scipy.stats import spearmanr
+corr, pval = spearmanr(full_scores, reduced_scores)
+print(f"\nRank correlation between full and reduced: {corr:.3f} (p={pval:.4f})")
     
-    
-    
-    
-    
+#%%    
