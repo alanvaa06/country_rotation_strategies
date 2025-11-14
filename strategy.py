@@ -57,7 +57,7 @@ def run_inputs():
         )
         
         # Run full pipeline with export enabled
-        processed_data, regions_dict, classification = processor.run_full_pipeline(export_data=True)
+        processed_data, regions_dict, classification = processor.run_full_pipeline(export_data=False)
         
         # Show some key metrics that were created
         # Get original file names (before derived metrics were added)
@@ -194,12 +194,17 @@ composite_scores_reduced, contributions_reduced = factor_transformer_reduced.cal
 normalized_scores_reduced, rebased_by_country, rebased_by_factor = factor_transformer_reduced.normalize_and_rebase_contributions()
 
 factor_changes_reduced = factor_transformer_reduced.calculate_factor_contribution_changes(period=5)
-
+#%%
 # Step 10: Plot results
-factor_transformer_reduced.plot_factor_contributions()
-
+factor_transformer_reduced.plot_factor_contributions('2025-11-12')
+#%%
 # Plot normalized scores for each country
 for country in normalized_scores.columns:
     normalized_scores[country].plot(title=country.upper(), figsize=(12, 6))
     plt.show()
 
+#%%
+for date in factor_transformer_reduced.change_dates[-10:]:
+    factor_transformer_reduced.plot_factor_contributions(date)
+#%%
+factor_transformer_reduced.change_dates[-10:]
