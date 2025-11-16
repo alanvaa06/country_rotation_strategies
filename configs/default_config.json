@@ -1,0 +1,18 @@
+{
+    "metric_weights": {
+        "zscore": 0.25,
+        "absolute_pct": 0.25,
+        "relative_rank": 0.1,
+        "delta_pct": 0.4
+    },
+    "category_weights": {
+        "Quality": 0.25,
+        "Valuation": 0.1,
+        "Profitability": 0.35,
+        "Momentum": 0.3
+    },
+    "country_filter": "World",
+    "distance_threshold": 0.5,
+    "selection_criterion": "unique",
+    "linkage_method": "ward"
+}
