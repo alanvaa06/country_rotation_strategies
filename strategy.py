@@ -14,16 +14,13 @@ import pandas as pd
 import numpy as np
 import warnings
 import matplotlib.pyplot as plt
-from scipy.stats import spearmanr
-
-import function_module as fm
 from FactorTransformer import FactorTransformer
 from ProcessData import ProcessData
 
 warnings.filterwarnings('ignore')
 
 # Set working directory
-os.chdir('D:/Users/avazquez/OneDrive - valmexcasabolsa/Documents/QuantModels/country_rotation')
+#os.chdir('D:/Users/avazquez/OneDrive - valmexcasabolsa/Documents/QuantModels/country_rotation')
 
 # Configure plotting style
 plt.style.use('seaborn-v0_8')
@@ -32,7 +29,7 @@ plt.style.use('seaborn-v0_8')
 def run_inputs():
     """
     Main execution function for the country rotation strategy.
-    
+
     This function orchestrates the entire data processing pipeline:
     1. Load raw data from Excel files
     2. Load classification data
@@ -42,7 +39,7 @@ def run_inputs():
     6. Transform and process all financial metrics
     7. Export processed data
     """
-    
+
     print("=" * 60)
     print("COUNTRY ROTATION STRATEGY - DATA PROCESSING PIPELINE")
     print("=" * 60)
@@ -98,6 +95,7 @@ print(f"   • processed_data: Same as dataFrames (alias)")
 processor.explore_data()
 
 #%%
+
 # ============================================================================
 # FACTOR TRANSFORMATION AND ANALYSIS
 # ============================================================================
@@ -124,7 +122,7 @@ category_weights = {
     'Profitability': 0.35,
     'Momentum': 0.3
 }
-
+#%%
 # ============================================================================
 # PHASE 1: INITIAL ANALYSIS (Full Factor Set)
 # ============================================================================
@@ -193,10 +191,11 @@ composite_scores_reduced, contributions_reduced = factor_transformer_reduced.cal
 
 normalized_scores_reduced, rebased_by_country, rebased_by_factor = factor_transformer_reduced.normalize_and_rebase_contributions()
 
-factor_changes_reduced = factor_transformer_reduced.calculate_factor_contribution_changes(period=5)
-#%%
+factor_changes_reduced, total_changes_reduced = factor_transformer_reduced.calculate_factor_contribution_changes(period=5)
+
 # Step 10: Plot results
-factor_transformer_reduced.plot_factor_contributions('2025-11-12')
+factor_transformer_reduced.plot_factor_contributions()
+
 #%%
 # Plot normalized scores for each country
 for country in normalized_scores.columns:
@@ -204,7 +203,7 @@ for country in normalized_scores.columns:
     plt.show()
 
 #%%
-for date in factor_transformer_reduced.change_dates[-10:]:
+for date in factor_transformer_reduced.change_dates[-3:]:
     factor_transformer_reduced.plot_factor_contributions(date)
 #%%
-factor_transformer_reduced.change_dates[-10:]
+)

@@ -620,21 +620,32 @@ class FactorTransformer:
         
         for category, contrib_df in self.rebased_contributions_by_factor.items():
             all_dates = contrib_df.index
-            selected_dates = all_dates[::period]
+            selected_dates = sorted(all_dates[::-period])
             changes = contrib_df.loc[selected_dates].diff()
             changes = changes.iloc[1:]
             factor_changes[category] = changes
-            
+
+
+            print(contrib_df.index[-1])
             if change_dates is None:
                 change_dates = changes.index.tolist()
-        
+
+        # Calculate total factor changes by summing all categories
+        dfs_list = list(factor_changes.values())
+        total_changes = dfs_list[0].copy()
+        for df in dfs_list[1:]:
+            total_changes = total_changes.add(df, fill_value=0)
+
         self.factor_contribution_changes = factor_changes
+        self.total_factor_changes = total_changes        
         self.change_dates = change_dates
+        
+
         
         print(f"Calculated {len(change_dates)} change periods with {period}-day intervals.")
         print(f"First change date: {change_dates[0]}, Last change date: {change_dates[-1]}")
         
-        return factor_changes
+        return factor_changes, total_changes
             
     def plot_factor_contributions(self, 
                                   date: str = None,
@@ -697,7 +708,8 @@ class FactorTransformer:
         }
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True, 
-                                         gridspec_kw={'height_ratios': [2, 1]})
+                                         gridspec_kw={'height_ratios': [2, 1]},
+                                         constrained_layout=True)
         
         countries = contributions_df.columns
         x_pos = np.arange(len(countries))
@@ -730,11 +742,9 @@ class FactorTransformer:
         ax2.grid(axis='y', alpha=0.3, linestyle='--')
         ax2.set_xlim(-0.5, len(countries) - 0.5)
         
-        handles, labels = ax1.get_legend_handles_labels()
-        fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5), 
+        ax1.legend(loc='upper left', bbox_to_anchor=(1, 1),
                   frameon=False, fontsize=10)
         
-        plt.tight_layout()
         plt.show()
         
         self.plot_contributions_df = contributions_df
