@@ -14,6 +14,8 @@ import pandas as pd
 import numpy as np
 import warnings
 import matplotlib.pyplot as plt
+from fontTools.misc.cython import returns
+
 from FactorTransformer import FactorTransformer
 from ProcessData import ProcessData
 
@@ -159,6 +161,19 @@ for factor in factor_redundancy_results['recommended_factors']:
     print(f"  {factor} ({category}): {factor_redundancy_results['selection_rationale'][factor]}")
 
 #%%
+selected_factors=['Debt', 'AssetsEquity', 'DvdYieldTTMSpread',
+                  'EbitdaMargin', 'ROE', 'Equity', 'EV', 'EV_EBIT',
+                  'Net_Debt_Ebitda', 'Flows', 'Fwd_EV_EBITDA',
+                  'CashFlowYieldFWDSpread', 'Fwd_PS', 'Fwd_ROE',
+                  'GDP', 'M2', 'CF', 'Revenue', 'SI_Ratio', 'Ten_Year',
+                  'ConsensusSalesGrowth', 'ConsensusEbitdaGrowth',
+                  'ConsensusEarningsGrowth', 'ConsensusCashFlowGrowth',
+                  'EarningsYieldTTMSpread', 'NetMargin', 'FwdRevenue',
+                  'FwdEBITDAMargin', 'RollingEarnings', 'FwdRollingEarnings',
+                  'RollingVol', 'CumFlow']
+
+
+#%%
 # ============================================================================
 # PHASE 2: FILTERED PIPELINE (Selected Factors)
 # ============================================================================
@@ -190,8 +205,9 @@ composite_scores_reduced, contributions_reduced = factor_transformer_reduced.cal
 )
 
 normalized_scores_reduced, rebased_by_country, rebased_by_factor = factor_transformer_reduced.normalize_and_rebase_contributions()
-
+#%%
 factor_changes_reduced, total_changes_reduced = factor_transformer_reduced.calculate_factor_contribution_changes(period=5)
+
 
 # Step 10: Plot results
 factor_transformer_reduced.plot_factor_contributions()
@@ -206,4 +222,12 @@ for country in normalized_scores.columns:
 for date in factor_transformer_reduced.change_dates[-3:]:
     factor_transformer_reduced.plot_factor_contributions(date)
 #%%
-)
+
+dates = factor_transformer_reduced.change_dates
+dates_tuple=[(dates[i-1], dates[i]) for i in range(1, len(dates))]
+#%%
+
+
+
+prices=dataFrames['Price'].loc[dates]
+returns=prices.diff().dropna()
