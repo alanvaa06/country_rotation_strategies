@@ -154,9 +154,9 @@ class ProcessData:
         if missing_essential:
             warnings.warn(f"Missing essential metrics: {missing_essential}. Some calculations may fail.")
         
-        print(f"✓ Input validation passed")
-        print(f"✓ Available metrics: {len(available_metrics)}")
-        print(f"✓ Classification entries: {len(classification)}")
+        print(f"Input validation passed")
+        print(f"Available metrics: {len(available_metrics)}")
+        print(f"Classification entries: {len(classification)}")
         
         return True
 
@@ -536,23 +536,23 @@ class ProcessData:
                     try:
                         output_path = os.path.join(output_folder, f"{key}.xlsx")
                         df.to_excel(output_path, index=True)
-                        print(f"  ✓ Exported {key} to {output_path}")
+                        print(f"  Exported {key} to {output_path}")
                     except Exception as e:
                         warnings.warn(f"Failed to export {key}: {str(e)}")
                 
-                print(f"\n✓ Data transformation completed successfully!")
-                print(f"✓ Created {len(processed_data)} processed datasets")
-                print(f"✓ Files exported to: {output_folder}/")
+                print(f"\nData transformation completed successfully!")
+                print(f"Created {len(processed_data)} processed datasets")
+                print(f"Files exported to: {output_folder}/")
             else:
-                print(f"\n✓ Data transformation completed successfully!")
-                print(f"✓ Created {len(processed_data)} processed datasets")
-                print(f"✓ Export skipped (export_data=False)")
+                print(f"\nData transformation completed successfully!")
+                print(f"Created {len(processed_data)} processed datasets")
+                print(f"Export skipped (export_data=False)")
             
             self.processed_data = processed_data
             return processed_data
             
         except Exception as e:
-            print(f"❌ Error during data transformation: {str(e)}")
+            print(f"Error during data transformation: {str(e)}")
             raise
 
     def explore_data(self, data_frames: Dict[str, pd.DataFrame] = None,

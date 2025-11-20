@@ -27,12 +27,13 @@ class FactorTransformer:
     - Visualizing factor contributions and dendrograms
     """
     
-    def __init__(self, country_filter: str = 'World'):
+    def __init__(self, country_filter: str = 'World', custom_countries: list = None):
         """
         Initialize FactorTransformer with country filter.
         
         Args:
-            country_filter: One of 'DM', 'EM', 'Asia', 'Europe', 'LatAm', 'World'
+            country_filter: One of 'DM', 'EM', 'Asia', 'Europe', 'LatAm', 'World', 'Custom'
+            custom_countries: List of country names to use when country_filter='Custom'
         """
         self.factor_map = {
             'PE': 'Valuation', 
@@ -291,12 +292,20 @@ class FactorTransformer:
         ]
         
         # Validate filter and set selected countries
-        valid_filters = ['DM', 'EM', 'Asia', 'Europe', 'LatAm', 'World']
+        valid_filters = ['DM', 'EM', 'Asia', 'Europe', 'LatAm', 'World', 'Custom']
         if country_filter not in valid_filters:
             raise ValueError(f"Invalid country_filter. Choose from: {valid_filters}")
         
         self.country_filter = country_filter
-        self.selected_countries = getattr(self, country_filter)
+        
+        # Handle custom country list
+        if country_filter == 'Custom':
+            if custom_countries is None or not isinstance(custom_countries, list) or len(custom_countries) == 0:
+                raise ValueError("When country_filter='Custom', you must provide a non-empty list of countries via custom_countries parameter.")
+            self.selected_countries = custom_countries
+        else:
+            self.selected_countries = getattr(self, country_filter)
+        
         self.window = 63
 
     def calculate_zscore(self, df: pd.DataFrame) -> pd.DataFrame:

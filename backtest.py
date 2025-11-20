@@ -1,0 +1,2025 @@
+﻿"""
+Backtest Module for Country Rotation Strategy
+
+This module contains the Backtest class for running backtests on country rotation strategies.
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import Counter
+from scipy.stats import spearmanr, pearsonr
+from scipy import stats
+
+
+class Backtest:
+    """
+    Backtest class for country rotation strategy.
+    
+    This class implements a robust backtesting framework that:
+    - Selects countries based on absolute or relative scoring criteria
+    - Constructs portfolio weights using Equal or Risk Parity weighting
+    - Blends active portfolio with a benchmark
+    - Calculates portfolio returns and active returns (gross and net)
+    - Tracks transaction costs and turnover
+    - Avoids look-ahead bias by using proper date filtering
+    
+    Parameters
+    ----------
+    normalized_score : pd.DataFrame
+        DataFrame of normalized scores (0-1) with dates as index and countries as columns
+    prices : pd.DataFrame
+        DataFrame of historical price levels (not returns) with dates as index and countries as columns
+        Note: This DataFrame contains the Benchmark column
+    selection_criteria : str, optional
+        "absolute" (default) or "relative"
+    absolute_selection_score : float, optional
+        Threshold for absolute selection (default 0.75)
+    relative_selection_score : int, optional
+        Number of top countries to select based on score change (default 5)
+    weighting_method : str, optional
+        Weighting method for active portfolio: "Equal" (default) or "Risk_Parity"
+        - "Equal": 1/N weighting for selected countries
+        - "Risk_Parity": Inverse volatility weighting for equal risk contribution
+    bmk : str, optional
+        Column name of the Benchmark within the prices DataFrame (default "Benchmark")
+    bmk_weight : float, optional
+        The fixed weight allocation for the benchmark (default 0.0)
+    periodicity : int, optional
+        Rebalancing frequency in days (default 5)
+    transaction_cost_bps : float, optional
+        Transaction cost in basis points (default 2.0 bps)
+    risk_parity_lookback : int, optional
+        Lookback window in days for Risk Parity covariance estimation (default 60)
+        Only used when weighting_method="Risk_Parity"
+    """
+    
+    def __init__(
+        self,
+        normalized_score: pd.DataFrame,
+        prices: pd.DataFrame,
+        selection_criteria: str = "absolute",
+        absolute_selection_score: float = 0.75,
+        relative_selection_score: int = 5,
+        weighting_method: str = "Equal",
+        bmk: str = "Benchmark",
+        bmk_weight: float = 0.0,
+        periodicity: int = 5,
+        transaction_cost_bps: float = 2.0,
+        risk_parity_lookback: int = 60
+    ):
+        """Initialize the Backtest class with strategy parameters."""
+        # Store input parameters
+        self.normalized_score = normalized_score.copy()
+        self.prices = prices.copy()
+        self.selection_criteria = selection_criteria.lower()
+        self.absolute_selection_score = absolute_selection_score
+        self.relative_selection_score = relative_selection_score
+        self.weighting_method = weighting_method
+        self.bmk = bmk
+        self.bmk_weight = bmk_weight
+        self.periodicity = periodicity
+        self.transaction_cost_bps = transaction_cost_bps / 10000.0  # Convert to decimal
+        self.risk_parity_lookback = risk_parity_lookback  # Lookback for covariance estimation
+        
+        # Validate inputs
+        self._validate_inputs()
+        
+        # Extract country columns (exclude benchmark)
+        self.countries = [col for col in self.normalized_score.columns if col != self.bmk]
+        
+        # Initialize result containers
+        self.returns = None  # Gross returns
+        self.returns_net = None  # Net returns (after transaction costs)
+        self.historical_countries = None
+        self.historical_active_weights = None
+        self.historical_weights = None
+        self.active_return = None
+        self.dates = None
+        self.date_tuples = None
+        
+        # Initialize transaction tracking containers
+        self.transaction_costs = None
+        self.turnover = None
+        self.countries_bought = None
+        self.countries_sold = None
+        self.historical_trades = None
+        
+    def _validate_inputs(self):
+        """Validate input parameters and data."""
+        # Check selection criteria
+        if self.selection_criteria not in ["absolute", "relative"]:
+            raise ValueError("selection_criteria must be 'absolute' or 'relative'")
+        
+        # Check weighting method
+        if self.weighting_method not in ["Equal", "Risk_Parity"]:
+            raise ValueError("weighting_method must be 'Equal' or 'Risk_Parity'")
+        
+        # Check benchmark weight
+        if not 0 <= self.bmk_weight <= 1:
+            raise ValueError("bmk_weight must be between 0 and 1")
+        
+        # Check if benchmark exists in prices
+        if self.bmk not in self.prices.columns:
+            raise ValueError(f"Benchmark '{self.bmk}' not found in prices DataFrame")
+        
+        # Check periodicity
+        if self.periodicity <= 0:
+            raise ValueError("periodicity must be positive")
+        
+        # Check date alignment (dates should be in both dataframes)
+        common_dates = self.normalized_score.index.intersection(self.prices.index)
+        if len(common_dates) == 0:
+            raise ValueError("No common dates found between normalized_score and prices")
+    
+    def run_backtest(self):
+        """
+        Execute the backtest loop.
+        
+        This method:
+        1. Filters dates based on periodicity
+        2. For each rebalancing period:
+           - Selects countries based on criteria
+           - Constructs active and blended weights
+           - Calculates turnover and transaction costs
+           - Calculates portfolio returns (gross and net)
+           - Calculates active returns
+        3. Stores all results as class attributes
+        
+        Returns
+        -------
+        dict
+            Dictionary containing all backtest results
+        """
+        print("=" * 60)
+        print("RUNNING BACKTEST")
+        print("=" * 60)
+        print(f"Selection Criteria: {self.selection_criteria.upper()}")
+        print(f"Periodicity: {self.periodicity} days")
+        print(f"Benchmark Weight: {self.bmk_weight:.1%}")
+        print(f"Active Weight: {1 - self.bmk_weight:.1%}")
+        print(f"Transaction Cost: {self.transaction_cost_bps * 10000:.1f} bps")
+        
+        # Step 1: Filter dates by periodicity
+        self.dates = self._filter_dates()
+        
+        # Step 2: Generate date tuples (selection_date, return_date)
+        self.date_tuples = [(self.dates[i-1], self.dates[i]) 
+                            for i in range(1, len(self.dates))]
+        
+        print(f"\nTotal Rebalancing Periods: {len(self.date_tuples)}")
+        
+        # Initialize storage lists
+        portfolio_returns_list = []
+        portfolio_returns_net_list = []
+        benchmark_returns_list = []
+        active_returns_list = []
+        selected_countries_list = []
+        active_weights_list = []
+        blended_weights_list = []
+        period_dates = []
+        
+        # Transaction tracking lists
+        turnover_list = []
+        transaction_costs_list = []
+        countries_bought_list = []
+        countries_sold_list = []
+        trade_details_list = []
+        
+        # Track previous period weights for turnover calculation
+        previous_weights = {}
+        
+        # Step 3: Loop through each period
+        for idx, (d_sel, d_ret) in enumerate(self.date_tuples):
+            # Select countries
+            selected_countries = self._select_countries(d_sel)
+            
+            # Construct weights
+            active_weights = self._construct_active_weights(selected_countries, current_date=d_sel)
+            blended_weights = self._construct_blended_weights(active_weights)
+            
+            # Calculate turnover and transaction costs
+            turnover_result = self._calculate_turnover(blended_weights, previous_weights)
+            turnover = turnover_result['turnover']
+            transaction_cost = turnover * self.transaction_cost_bps
+            bought = turnover_result['bought']
+            sold = turnover_result['sold']
+            trades = turnover_result['trades']
+            
+            # Calculate returns for the period
+            period_returns = self._calculate_period_returns(d_sel, d_ret)
+            
+            # Calculate gross portfolio return
+            portfolio_return_gross = self._calculate_portfolio_return(blended_weights, period_returns)
+            
+            # Calculate net portfolio return (after transaction costs)
+            portfolio_return_net = portfolio_return_gross - transaction_cost
+            
+            # Calculate benchmark return
+            benchmark_return = period_returns.get(self.bmk, 0.0)
+            
+            # Calculate active return (using gross returns)
+            active_return = portfolio_return_gross - benchmark_return
+            
+            # Store results
+            portfolio_returns_list.append(portfolio_return_gross)
+            portfolio_returns_net_list.append(portfolio_return_net)
+            benchmark_returns_list.append(benchmark_return)
+            active_returns_list.append(active_return)
+            selected_countries_list.append(selected_countries)
+            active_weights_list.append(active_weights)
+            blended_weights_list.append(blended_weights)
+            period_dates.append(d_ret)
+            
+            # Store transaction tracking data
+            turnover_list.append(turnover)
+            transaction_costs_list.append(transaction_cost)
+            countries_bought_list.append(bought)
+            countries_sold_list.append(sold)
+            trade_details_list.append(trades)
+            
+            # Update previous weights for next iteration
+            previous_weights = blended_weights.copy()
+            
+            # Print progress every 50 periods
+            if (idx + 1) % 50 == 0:
+                print(f"Processed {idx + 1}/{len(self.date_tuples)} periods...")
+        
+        # Step 4: Convert results to DataFrames and Series
+        self._store_results(
+            period_dates,
+            portfolio_returns_list,
+            portfolio_returns_net_list,
+            benchmark_returns_list,
+            active_returns_list,
+            selected_countries_list,
+            active_weights_list,
+            blended_weights_list,
+            turnover_list,
+            transaction_costs_list,
+            countries_bought_list,
+            countries_sold_list,
+            trade_details_list
+        )
+        
+        print(f"\nBacktest completed successfully!")
+        print(f"   Total Periods: {len(self.returns)}")
+        print(f"   Average Gross Return: {self.returns.mean():.4%}")
+        print(f"   Average Net Return: {self.returns_net.mean():.4%}")
+        print(f"   Average Transaction Cost: {self.transaction_costs.mean():.4%}")
+        print(f"   Average Turnover: {self.turnover.mean():.2%}")
+        print(f"   Average Active Return: {self.active_return.mean():.4%}")
+        
+        return self.get_results()
+    
+    def _filter_dates(self):
+        """
+        Filter dates from normalized_score using periodicity.
+        
+        Returns
+        -------
+        list
+            Sorted list of dates at specified periodicity intervals
+        """
+        # Get all dates from normalized_score
+        all_dates = sorted(self.normalized_score.index)
+        
+        # Filter by periodicity: take every nth date starting from the end
+        # Logic: sorted(normalized_score.index[::-period])
+        filtered_dates = sorted(all_dates[::-self.periodicity])
+        
+        return filtered_dates
+    
+    def _select_countries(self, d_sel):
+        """
+        Select countries based on the selection criteria.
+        
+        Parameters
+        ----------
+        d_sel : date
+            Selection/rebalancing date
+        
+        Returns
+        -------
+        list
+            List of selected country names
+        """
+        if d_sel not in self.normalized_score.index:
+            return []
+        
+        if self.selection_criteria == "absolute":
+            return self._select_absolute(d_sel)
+        elif self.selection_criteria == "relative":
+            return self._select_relative(d_sel)
+        else:
+            raise ValueError(f"Unknown selection criteria: {self.selection_criteria}")
+    
+    def _select_absolute(self, d_sel):
+        """
+        Select countries using absolute threshold method.
+        
+        Parameters
+        ----------
+        d_sel : date
+            Selection date
+        
+        Returns
+        -------
+        list
+            List of countries where score > absolute_selection_score
+        """
+        # Get scores at selection date
+        scores = self.normalized_score.loc[d_sel, self.countries]
+        
+        # Handle missing data
+        scores = scores.dropna()
+        
+        # Select countries above threshold
+        selected = scores[scores > self.absolute_selection_score].index.tolist()
+        
+        # Edge case: If no countries meet threshold, return empty list
+        # (will default to 100% benchmark in weight construction)
+        return selected
+    
+    def _select_relative(self, d_sel):
+        """
+        Select countries using relative ranking method based on score change.
+        
+        Parameters
+        ----------
+        d_sel : date
+            Selection date
+        
+        Returns
+        -------
+        list
+            List of top N countries with highest positive score change
+        """
+        # Find previous date (period days ago)
+        d_prev = self._get_previous_date(d_sel, self.periodicity)
+        
+        if d_prev is None or d_prev not in self.normalized_score.index:
+            # If no previous date available, use current scores
+            scores_current = self.normalized_score.loc[d_sel, self.countries]
+            scores_current = scores_current.dropna()
+            top_countries = scores_current.nlargest(self.relative_selection_score).index.tolist()
+            return top_countries
+        
+        # Calculate score change
+        scores_current = self.normalized_score.loc[d_sel, self.countries]
+        scores_prev = self.normalized_score.loc[d_prev, self.countries]
+        
+        # Handle missing data
+        score_change = (scores_current - scores_prev).dropna()
+        
+        # Select top N countries with highest score change
+        top_countries = score_change.nlargest(self.relative_selection_score).index.tolist()
+        
+        return top_countries
+    
+    def _get_previous_date(self, current_date, lookback_days):
+        """
+        Get the date that is lookback_days before current_date.
+        
+        Parameters
+        ----------
+        current_date : date
+            Current date
+        lookback_days : int
+            Number of days to look back
+        
+        Returns
+        -------
+        date or None
+            Previous date or None if not found
+        """
+        all_dates = sorted(self.normalized_score.index)
+        
+        if current_date not in all_dates:
+            return None
+        
+        current_idx = all_dates.index(current_date)
+        target_idx = current_idx - lookback_days
+        
+        if target_idx < 0:
+            return None
+        
+        return all_dates[target_idx]
+    
+    def _construct_active_weights(self, selected_countries, current_date=None):
+        """
+        Construct active portfolio weights using the specified weighting method.
+        
+        Parameters
+        ----------
+        selected_countries : list
+            List of selected country names
+        current_date : datetime, optional
+            Current date for Risk Parity covariance calculation
+        
+        Returns
+        -------
+        dict
+            Dictionary mapping country names to weights
+        """
+        if len(selected_countries) == 0:
+            # No countries selected - return empty weights
+            return {}
+        
+        if self.weighting_method == "Equal":
+            # Equal weighting: 1/N for each country
+            weight = 1.0 / len(selected_countries)
+            return {country: weight for country in selected_countries}
+        
+        elif self.weighting_method == "Risk_Parity":
+            # Risk Parity weighting: equal risk contribution
+            if current_date is None:
+                raise ValueError("Risk Parity requires current_date parameter")
+            return self._calculate_risk_parity_weights(selected_countries, current_date)
+        
+        else:
+            raise ValueError(f"Unsupported weighting method: {self.weighting_method}")
+    
+    def _calculate_risk_parity_weights(self, selected_countries, current_date):
+        """
+        Calculate Risk Parity weights based on inverse variance.
+        
+        Risk Parity allocates weights so that each asset contributes equally to portfolio risk.
+        Uses inverse variance weighting (w_i ∝ 1/σ_i²) as an approximation to equal risk contribution.
+        Uses a lookback window to estimate volatility from historical returns (excluding current date).
+        
+        Note: This uses the simplified approach assuming uncorrelated assets. For highly correlated
+        assets, true risk parity would require iterative optimization, but inverse variance provides
+        a good approximation while being computationally efficient.
+        
+        Parameters
+        ----------
+        selected_countries : list
+            List of selected country names
+        current_date : datetime
+            Current date for calculating historical returns (not included in lookback)
+        
+        Returns
+        -------
+        dict
+            Dictionary mapping country names to risk parity weights
+        """
+        # Get historical prices for lookback period
+        all_dates = sorted(self.prices.index)
+        
+        # Find current date index
+        if current_date not in all_dates:
+            # Fallback to equal weights if date not found
+            weight = 1.0 / len(selected_countries)
+            return {country: weight for country in selected_countries}
+        
+        current_idx = all_dates.index(current_date)
+        
+        # Calculate start index for lookback
+        start_idx = max(0, current_idx - self.risk_parity_lookback)
+        
+        if start_idx >= current_idx:
+            # Not enough historical data, fallback to equal weights
+            weight = 1.0 / len(selected_countries)
+            return {country: weight for country in selected_countries}
+        
+        # Get historical prices for selected countries
+        lookback_dates = all_dates[start_idx:current_idx]
+        
+        if len(lookback_dates) < 10:  # Minimum 10 periods for meaningful estimate
+            # Fallback to equal weights
+            weight = 1.0 / len(selected_countries)
+            return {country: weight for country in selected_countries}
+        
+        # Calculate returns for selected countries
+        returns_data = {}
+        for country in selected_countries:
+            if country in self.prices.columns:
+                prices_series = self.prices.loc[lookback_dates, country]
+                # Calculate returns
+                returns_series = prices_series.pct_change().dropna()
+                if len(returns_series) > 0:
+                    returns_data[country] = returns_series
+        
+        if len(returns_data) == 0:
+            # No valid return data, fallback to equal weights
+            weight = 1.0 / len(selected_countries)
+            return {country: weight for country in selected_countries}
+        
+        # Create returns DataFrame
+        returns_df = pd.DataFrame(returns_data)
+        returns_df = returns_df.dropna()
+        
+        if len(returns_df) < 5 or returns_df.shape[1] < len(selected_countries):
+            # Insufficient data, fallback to equal weights
+            weight = 1.0 / len(selected_countries)
+            return {country: weight for country in selected_countries}
+        
+        # Calculate covariance matrix
+        cov_matrix = returns_df.cov()
+        
+        # Calculate volatilities (standard deviations)
+        volatilities = returns_df.std()
+        
+        # True Risk Parity: Inverse variance weighting
+        # For equal risk contribution, weight is proportional to 1/variance (1/σ²)
+        # This ensures each asset contributes equally to total portfolio risk
+        inverse_variances = 1.0 / (volatilities ** 2)
+        
+        # Handle edge cases (zero or near-zero volatility)
+        inverse_variances = inverse_variances.replace([np.inf, -np.inf], 0)
+        inverse_variances = inverse_variances.fillna(0)
+        
+        if inverse_variances.sum() == 0:
+            # All volatilities are zero or invalid, fallback to equal weights
+            weight = 1.0 / len(selected_countries)
+            return {country: weight for country in selected_countries}
+        
+        # Normalize to sum to 1
+        risk_parity_weights = inverse_variances / inverse_variances.sum()
+        
+        # Convert to dictionary
+        weights_dict = risk_parity_weights.to_dict()
+        
+        # Ensure all selected countries are in the dictionary (even if missing data)
+        for country in selected_countries:
+            if country not in weights_dict:
+                weights_dict[country] = 0.0
+        
+        # Renormalize to ensure sum = 1.0
+        total_weight = sum(weights_dict.values())
+        if total_weight > 0:
+            weights_dict = {k: v / total_weight for k, v in weights_dict.items()}
+        else:
+            # Fallback to equal weights
+            weight = 1.0 / len(selected_countries)
+            weights_dict = {country: weight for country in selected_countries}
+        
+        return weights_dict
+    
+    def _construct_blended_weights(self, active_weights):
+        """
+        Construct final blended weights including benchmark.
+        
+        Formula: Weight_Final = (bmk_weight * Benchmark) + ((1 - bmk_weight) * Active_Portfolio)
+        
+        Parameters
+        ----------
+        active_weights : dict
+            Dictionary of active portfolio weights
+        
+        Returns
+        -------
+        dict
+            Dictionary of final blended weights (including benchmark)
+        """
+        blended_weights = {}
+        
+        # If no active countries selected, allocate 100% to benchmark
+        if len(active_weights) == 0:
+            blended_weights[self.bmk] = 1.0
+            return blended_weights
+        
+        # Add benchmark weight
+        blended_weights[self.bmk] = self.bmk_weight
+        
+        # Scale active weights by (1 - bmk_weight) and add to blended weights
+        active_scale = 1.0 - self.bmk_weight
+        for country, weight in active_weights.items():
+            blended_weights[country] = weight * active_scale
+        
+        # Verify weights sum to 1.0 (with small tolerance for floating point errors)
+        total_weight = sum(blended_weights.values())
+        if not np.isclose(total_weight, 1.0, atol=1e-6):
+            raise ValueError(f"Weights do not sum to 1.0: {total_weight}")
+        
+        return blended_weights
+    
+    def _calculate_turnover(self, current_weights, previous_weights):
+        """
+        Calculate portfolio turnover and track traded countries.
+        
+        Turnover = sum of absolute weight changes / 2
+        (divide by 2 because buying = selling in terms of dollar volume)
+        
+        Parameters
+        ----------
+        current_weights : dict
+            Current period portfolio weights
+        previous_weights : dict
+            Previous period portfolio weights
+        
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - turnover: float (total turnover)
+            - bought: list (countries with increased positions)
+            - sold: list (countries with decreased positions)
+            - trades: dict (weight changes by country)
+        """
+        # If first period, consider it as full deployment (100% turnover)
+        if not previous_weights:
+            bought = [c for c in current_weights.keys() if c != self.bmk]
+            return {
+                'turnover': 1.0 - current_weights.get(self.bmk, 0.0),  # Exclude benchmark from turnover
+                'bought': bought,
+                'sold': [],
+                'trades': {c: current_weights[c] for c in bought}
+            }
+        
+        # Get all countries that appear in either period (excluding benchmark)
+        all_countries = set(current_weights.keys()).union(set(previous_weights.keys()))
+        all_countries.discard(self.bmk)  # Exclude benchmark from turnover calculation
+        
+        # Calculate weight changes
+        weight_changes = {}
+        bought = []
+        sold = []
+        total_absolute_change = 0.0
+        
+        for country in all_countries:
+            prev_weight = previous_weights.get(country, 0.0)
+            curr_weight = current_weights.get(country, 0.0)
+            change = curr_weight - prev_weight
+            
+            if abs(change) > 1e-6:  # Ignore negligible changes
+                weight_changes[country] = change
+                total_absolute_change += abs(change)
+                
+                if change > 0:
+                    bought.append(country)
+                else:
+                    sold.append(country)
+        
+        # Turnover is half of total absolute change
+        # (because every dollar sold is matched by a dollar bought)
+        turnover = total_absolute_change / 2.0
+        
+        return {
+            'turnover': turnover,
+            'bought': bought,
+            'sold': sold,
+            'trades': weight_changes
+        }
+    
+    def _calculate_period_returns(self, d_sel, d_ret):
+        """
+        Calculate simple returns for all assets between d_sel and d_ret.
+        
+        Parameters
+        ----------
+        d_sel : date
+            Selection date (start of period)
+        d_ret : date
+            Return date (end of period)
+        
+        Returns
+        -------
+        dict
+            Dictionary mapping asset names to their period returns
+        """
+        # Check if dates exist in prices
+        if d_sel not in self.prices.index or d_ret not in self.prices.index:
+            return {}
+        
+        # Get prices at both dates
+        price_start = self.prices.loc[d_sel]
+        price_end = self.prices.loc[d_ret]
+        
+        # Calculate simple returns: (P_end - P_start) / P_start
+        period_returns = {}
+        for asset in self.prices.columns:
+            if pd.notna(price_start[asset]) and pd.notna(price_end[asset]) and price_start[asset] != 0:
+                period_returns[asset] = (price_end[asset] - price_start[asset]) / price_start[asset]
+            else:
+                period_returns[asset] = 0.0
+        
+        return period_returns
+    
+    def _calculate_portfolio_return(self, weights, period_returns):
+        """
+        Calculate portfolio return as dot product of weights and returns.
+        
+        Parameters
+        ----------
+        weights : dict
+            Dictionary of portfolio weights
+        period_returns : dict
+            Dictionary of period returns
+        
+        Returns
+        -------
+        float
+            Portfolio return for the period
+        """
+        portfolio_return = 0.0
+        
+        for asset, weight in weights.items():
+            if asset in period_returns:
+                portfolio_return += weight * period_returns[asset]
+        
+        return portfolio_return
+    
+    def _store_results(
+        self,
+        dates,
+        portfolio_returns,
+        portfolio_returns_net,
+        benchmark_returns,
+        active_returns,
+        selected_countries,
+        active_weights,
+        blended_weights,
+        turnover_list,
+        transaction_costs_list,
+        countries_bought_list,
+        countries_sold_list,
+        trade_details_list
+    ):
+        """
+        Convert results to pandas objects and store as class attributes.
+        
+        Parameters
+        ----------
+        dates : list
+            List of period end dates
+        portfolio_returns : list
+            List of gross portfolio returns
+        portfolio_returns_net : list
+            List of net portfolio returns (after transaction costs)
+        benchmark_returns : list
+            List of benchmark returns
+        active_returns : list
+            List of active returns
+        selected_countries : list of lists
+            List of selected countries for each period
+        active_weights : list of dicts
+            List of active weight dictionaries
+        blended_weights : list of dicts
+            List of blended weight dictionaries
+        turnover_list : list
+            List of turnover values
+        transaction_costs_list : list
+            List of transaction costs
+        countries_bought_list : list of lists
+            List of countries bought each period
+        countries_sold_list : list of lists
+            List of countries sold each period
+        trade_details_list : list of dicts
+            List of detailed trade information
+        """
+        # Store returns as Series (gross returns for performance analysis)
+        self.returns = pd.Series(portfolio_returns, index=dates, name='Portfolio_Return_Gross')
+        self.returns_net = pd.Series(portfolio_returns_net, index=dates, name='Portfolio_Return_Net')
+        self.benchmark_returns = pd.Series(benchmark_returns, index=dates, name='Benchmark_Return')
+        self.active_return = pd.Series(active_returns, index=dates, name='Active_Return')
+        
+        # Store transaction tracking data
+        self.turnover = pd.Series(turnover_list, index=dates, name='Turnover')
+        self.transaction_costs = pd.Series(transaction_costs_list, index=dates, name='Transaction_Costs')
+        
+        # Store historical countries as DataFrame
+        # Create a DataFrame where each row is a date and columns are country positions (0, 1, 2, ...)
+        max_countries = max(len(countries) for countries in selected_countries) if selected_countries else 0
+        countries_data = []
+        for countries in selected_countries:
+            row = countries + [None] * (max_countries - len(countries))
+            countries_data.append(row)
+        
+        self.historical_countries = pd.DataFrame(
+            countries_data,
+            index=dates,
+            columns=range(max_countries)
+        )
+        
+        # Store historical active weights as DataFrame
+        self.historical_active_weights = pd.DataFrame(active_weights, index=dates).fillna(0.0)
+        
+        # Store historical blended weights as DataFrame
+        self.historical_weights = pd.DataFrame(blended_weights, index=dates).fillna(0.0)
+        
+        # Store countries bought and sold
+        max_bought = max(len(bought) for bought in countries_bought_list) if countries_bought_list else 0
+        max_sold = max(len(sold) for sold in countries_sold_list) if countries_sold_list else 0
+        
+        bought_data = []
+        for bought in countries_bought_list:
+            row = bought + [None] * (max_bought - len(bought))
+            bought_data.append(row)
+        
+        sold_data = []
+        for sold in countries_sold_list:
+            row = sold + [None] * (max_sold - len(sold))
+            sold_data.append(row)
+        
+        self.countries_bought = pd.DataFrame(
+            bought_data,
+            index=dates,
+            columns=[f'Bought_{i}' for i in range(max_bought)]
+        )
+        
+        self.countries_sold = pd.DataFrame(
+            sold_data,
+            index=dates,
+            columns=[f'Sold_{i}' for i in range(max_sold)]
+        )
+        
+        # Store detailed trade information
+        self.historical_trades = trade_details_list
+    
+    def get_results(self):
+        """
+        Get all backtest results.
+        
+        Returns
+        -------
+        dict
+            Dictionary containing all backtest results
+        """
+        if self.returns is None:
+            raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
+        
+        return {
+            'returns': self.returns,
+            'returns_net': self.returns_net,
+            'benchmark_returns': self.benchmark_returns,
+            'active_return': self.active_return,
+            'historical_countries': self.historical_countries,
+            'historical_active_weights': self.historical_active_weights,
+            'historical_weights': self.historical_weights,
+            'turnover': self.turnover,
+            'transaction_costs': self.transaction_costs,
+            'countries_bought': self.countries_bought,
+            'countries_sold': self.countries_sold,
+            'dates': self.dates,
+            'date_tuples': self.date_tuples
+        }
+    
+    def get_performance_summary(self):
+        """
+        Calculate and return performance summary statistics.
+        
+        Uses geometric returns for annualization and adjusts for actual periodicity.
+        
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with performance metrics for portfolio, benchmark, and active
+        """
+        if self.returns is None:
+            raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
+        
+        # Calculate number of days in sample
+        num_days = (self.returns.index[-1] - self.returns.index[0]).days
+        
+        # Calculate periods per year based on actual periodicity
+        # If rebalancing every 5 days, we have ~252/5 = ~50 periods per year
+        periods_per_year = 252 / self.periodicity
+        
+        # Calculate cumulative returns
+        cum_portfolio = (1 + self.returns).cumprod() - 1
+        cum_benchmark = (1 + self.benchmark_returns).cumprod() - 1
+        cum_active = (1 + self.active_return).cumprod() - 1
+        
+        # Helper function to calculate annualized return (geometric)
+        def calc_annualized_return(returns_series, days):
+            """Calculate annualized return using geometric method."""
+            if len(returns_series) == 0 or days <= 0:
+                return np.nan
+            total_return = (1 + returns_series).prod()
+            if total_return <= 0:
+                return np.nan
+            return total_return ** (365.0 / days) - 1
+        
+        # Helper function to calculate annualized volatility
+        def calc_annualized_vol(returns_series, periods_py):
+            """Calculate annualized volatility."""
+            if len(returns_series) == 0:
+                return np.nan
+            return returns_series.std() * np.sqrt(periods_py)
+        
+        # Helper function to calculate Sharpe Ratio
+        def calc_sharpe(ann_return, ann_vol):
+            """Calculate Sharpe ratio from annualized metrics."""
+            if pd.isna(ann_return) or pd.isna(ann_vol) or ann_vol == 0:
+                return np.nan
+            return ann_return / ann_vol
+        
+        # Helper function to calculate Beta
+        def calc_beta(portfolio_returns, benchmark_returns):
+            """Calculate portfolio beta relative to benchmark."""
+            if len(portfolio_returns) == 0 or len(benchmark_returns) == 0:
+                return np.nan
+            # Align the series
+            aligned = pd.DataFrame({'port': portfolio_returns, 'bmk': benchmark_returns}).dropna()
+            if len(aligned) < 2:
+                return np.nan
+            cov = aligned['port'].cov(aligned['bmk'])
+            var = aligned['bmk'].var()
+            if var == 0:
+                return np.nan
+            return cov / var
+        
+        # Helper function to calculate Tracking Error
+        def calc_tracking_error(active_returns, periods_py):
+            """Calculate annualized tracking error."""
+            if len(active_returns) == 0:
+                return np.nan
+            return active_returns.std() * np.sqrt(periods_py)
+        
+        # Helper function to calculate Up/Down Capture
+        def calc_capture_ratios(portfolio_returns, benchmark_returns):
+            """Calculate up and down capture ratios."""
+            aligned = pd.DataFrame({'port': portfolio_returns, 'bmk': benchmark_returns}).dropna()
+            if len(aligned) == 0:
+                return np.nan, np.nan
+            
+            # Up capture: average portfolio return when benchmark is positive / average positive benchmark return
+            up_periods = aligned[aligned['bmk'] > 0]
+            if len(up_periods) > 0 and up_periods['bmk'].mean() != 0:
+                up_capture = up_periods['port'].mean() / up_periods['bmk'].mean()
+            else:
+                up_capture = np.nan
+            
+            # Down capture: average portfolio return when benchmark is negative / average negative benchmark return
+            down_periods = aligned[aligned['bmk'] < 0]
+            if len(down_periods) > 0 and down_periods['bmk'].mean() != 0:
+                down_capture = down_periods['port'].mean() / down_periods['bmk'].mean()
+            else:
+                down_capture = np.nan
+            
+            return up_capture, down_capture
+        
+        # Calculate metrics for Portfolio
+        port_ann_return = calc_annualized_return(self.returns, num_days)
+        port_ann_vol = calc_annualized_vol(self.returns, periods_per_year)
+        port_sharpe = calc_sharpe(port_ann_return, port_ann_vol)
+        port_beta = calc_beta(self.returns, self.benchmark_returns)
+        port_up_capture, port_down_capture = calc_capture_ratios(self.returns, self.benchmark_returns)
+        
+        # Calculate metrics for Benchmark
+        bmk_ann_return = calc_annualized_return(self.benchmark_returns, num_days)
+        bmk_ann_vol = calc_annualized_vol(self.benchmark_returns, periods_per_year)
+        bmk_sharpe = calc_sharpe(bmk_ann_return, bmk_ann_vol)
+        
+        # Calculate metrics for Active
+        active_ann_return = calc_annualized_return(self.active_return, num_days)
+        active_ann_vol = calc_annualized_vol(self.active_return, periods_per_year)
+        active_info_ratio = calc_sharpe(active_ann_return, active_ann_vol)  # Information ratio = Active Return / Active Vol
+        tracking_error = calc_tracking_error(self.active_return, periods_per_year)
+        
+        # Build statistics dictionary
+        stats = {
+            'Portfolio': {
+                'Total Return': cum_portfolio.iloc[-1] if len(cum_portfolio) > 0 else np.nan,
+                'Annualized Return': port_ann_return,
+                'Annualized Volatility': port_ann_vol,
+                'Sharpe Ratio': port_sharpe,
+                'Max Drawdown': self._calculate_max_drawdown(self.returns),
+                'Win Rate': (self.returns > 0).sum() / len(self.returns) if len(self.returns) > 0 else np.nan,
+                'Beta': port_beta,
+                'Up Capture': port_up_capture,
+                'Down Capture': port_down_capture,
+                'Tracking Error': tracking_error
+            },
+            'Benchmark': {
+                'Total Return': cum_benchmark.iloc[-1] if len(cum_benchmark) > 0 else np.nan,
+                'Annualized Return': bmk_ann_return,
+                'Annualized Volatility': bmk_ann_vol,
+                'Sharpe Ratio': bmk_sharpe,
+                'Max Drawdown': self._calculate_max_drawdown(self.benchmark_returns),
+                'Win Rate': (self.benchmark_returns > 0).sum() / len(self.benchmark_returns) if len(self.benchmark_returns) > 0 else np.nan,
+                'Beta': np.nan,  # Benchmark beta to itself would be 1, but NA makes more sense
+                'Up Capture': np.nan,
+                'Down Capture': np.nan,
+                'Tracking Error': np.nan
+            },
+            'Active': {
+                'Total Return': cum_active.iloc[-1] if len(cum_active) > 0 else np.nan,
+                'Annualized Return': active_ann_return,
+                'Annualized Volatility': active_ann_vol,
+                'Sharpe Ratio': np.nan,  # Sharpe not applicable for active returns
+                'Max Drawdown': self._calculate_max_drawdown(self.active_return),
+                'Win Rate': (self.active_return > 0).sum() / len(self.active_return) if len(self.active_return) > 0 else np.nan,
+                'Beta': np.nan,  # Beta not applicable for active returns
+                'Up Capture': np.nan,
+                'Down Capture': np.nan,
+                'Tracking Error': tracking_error,
+                'Information Ratio': active_info_ratio
+            }
+        }
+        
+        return pd.DataFrame(stats).T
+    
+    def _calculate_max_drawdown(self, returns):
+        """
+        Calculate maximum drawdown from a return series.
+        
+        Parameters
+        ----------
+        returns : pd.Series
+            Series of returns
+        
+        Returns
+        -------
+        float
+            Maximum drawdown (as a negative number)
+        """
+        cum_returns = (1 + returns).cumprod()
+        running_max = cum_returns.cummax()
+        drawdown = (cum_returns - running_max) / running_max
+        return drawdown.min()
+    
+    def portfolio_turnover_analysis(self, plot=True):
+        """
+        Perform comprehensive turnover analysis.
+        
+        Analyzes:
+        - Turnover statistics over time
+        - Transaction costs impact
+        - Countries bought and sold each period
+        - Most frequently traded countries
+        - Turnover distribution
+        
+        Parameters
+        ----------
+        plot : bool, optional
+            Whether to generate visualizations (default True)
+        
+        Returns
+        -------
+        dict
+            Dictionary containing turnover analysis results
+        """
+        if self.turnover is None:
+            raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
+        
+        print("=" * 80)
+        print("PORTFOLIO TURNOVER ANALYSIS")
+        print("=" * 80)
+        
+        # Calculate turnover statistics
+        avg_turnover = self.turnover.mean()
+        median_turnover = self.turnover.median()
+        max_turnover = self.turnover.max()
+        min_turnover = self.turnover.min()
+        std_turnover = self.turnover.std()
+        
+        # Calculate transaction cost statistics
+        avg_tc = self.transaction_costs.mean()
+        total_tc = self.transaction_costs.sum()
+        tc_as_pct_of_return = (total_tc / self.returns.sum()) * 100 if self.returns.sum() != 0 else np.nan
+        
+        # Count countries bought and sold per period
+        num_bought = self.countries_bought.notna().sum(axis=1)
+        num_sold = self.countries_sold.notna().sum(axis=1)
+        
+        # Most frequently traded countries
+        all_bought = []
+        all_sold = []
+        for idx in range(len(self.countries_bought)):
+            bought_row = self.countries_bought.iloc[idx].dropna().tolist()
+            sold_row = self.countries_sold.iloc[idx].dropna().tolist()
+            all_bought.extend(bought_row)
+            all_sold.extend(sold_row)
+        
+        # Count trading frequency
+        from collections import Counter
+        bought_counter = Counter(all_bought)
+        sold_counter = Counter(all_sold)
+        
+        # Combine for total trades
+        all_trades = all_bought + all_sold
+        total_trades_counter = Counter(all_trades)
+        
+        # Get top traded countries
+        top_n = 10
+        most_bought = bought_counter.most_common(top_n)
+        most_sold = sold_counter.most_common(top_n)
+        most_traded = total_trades_counter.most_common(top_n)
+        
+        # Calculate gross vs net returns comparison
+        cum_gross = (1 + self.returns).cumprod() - 1
+        cum_net = (1 + self.returns_net).cumprod() - 1
+        gross_final = cum_gross.iloc[-1]
+        net_final = cum_net.iloc[-1]
+        tc_drag = gross_final - net_final
+        
+        # Print summary
+        print(f"\nTURNOVER STATISTICS:")
+        print(f"   Average Turnover: {avg_turnover:.2%}")
+        print(f"   Median Turnover: {median_turnover:.2%}")
+        print(f"   Max Turnover: {max_turnover:.2%}")
+        print(f"   Min Turnover: {min_turnover:.2%}")
+        print(f"   Std Dev: {std_turnover:.2%}")
+        
+        print(f"\nTRANSACTION COST ANALYSIS:")
+        print(f"   Average Transaction Cost: {avg_tc:.4%}")
+        print(f"   Total Transaction Costs: {total_tc:.4%}")
+        print(f"   TC as % of Gross Returns: {tc_as_pct_of_return:.2f}%")
+        print(f"   Gross Final Return: {gross_final:.2%}")
+        print(f"   Net Final Return: {net_final:.2%}")
+        print(f"   Return Drag from TC: {tc_drag:.2%}")
+        
+        print(f"\nTRADING ACTIVITY:")
+        print(f"   Average Countries Bought per Period: {num_bought.mean():.2f}")
+        print(f"   Average Countries Sold per Period: {num_sold.mean():.2f}")
+        print(f"   Total Unique Countries Traded: {len(total_trades_counter)}")
+        print(f"   Total Trading Events: {len(all_trades)}")
+        
+        print(f"\nMOST BOUGHT COUNTRIES (Top {len(most_bought)}):")
+        for i, (country, count) in enumerate(most_bought, 1):
+            print(f"   {i}. {country}: {count} times")
+        
+        print(f"\nMOST SOLD COUNTRIES (Top {len(most_sold)}):")
+        for i, (country, count) in enumerate(most_sold, 1):
+            print(f"   {i}. {country}: {count} times")
+        
+        print(f"\nMOST TRADED COUNTRIES (Top {len(most_traded)}):")
+        for i, (country, count) in enumerate(most_traded, 1):
+            pct = (count / len(all_trades)) * 100
+            print(f"   {i}. {country}: {count} trades ({pct:.1f}% of total)")
+        
+        # Generate visualizations if requested
+        if plot:
+            self._plot_turnover_analysis(
+                num_bought, num_sold, most_traded, 
+                bought_counter, sold_counter, total_trades_counter
+            )
+        
+        # Return results dictionary
+        results = {
+            'turnover_stats': {
+                'mean': avg_turnover,
+                'median': median_turnover,
+                'max': max_turnover,
+                'min': min_turnover,
+                'std': std_turnover
+            },
+            'transaction_cost_stats': {
+                'mean': avg_tc,
+                'total': total_tc,
+                'pct_of_returns': tc_as_pct_of_return,
+                'gross_return': gross_final,
+                'net_return': net_final,
+                'return_drag': tc_drag
+            },
+            'trading_activity': {
+                'avg_bought': num_bought.mean(),
+                'avg_sold': num_sold.mean(),
+                'unique_countries': len(total_trades_counter),
+                'total_events': len(all_trades)
+            },
+            'most_bought': most_bought,
+            'most_sold': most_sold,
+            'most_traded': most_traded,
+            'country_trade_counts': total_trades_counter
+        }
+        
+        return results
+    
+    def _plot_turnover_analysis(self, num_bought, num_sold, most_traded, 
+                                 bought_counter, sold_counter, total_trades_counter):
+        """
+        Generate comprehensive turnover visualizations.
+        
+        Parameters
+        ----------
+        num_bought : pd.Series
+            Number of countries bought per period
+        num_sold : pd.Series
+            Number of countries sold per period
+        most_traded : list
+            List of (country, count) tuples for most traded
+        bought_counter : Counter
+            Counter of bought countries
+        sold_counter : Counter
+            Counter of sold countries
+        total_trades_counter : Counter
+            Counter of all trades
+        """
+        fig = plt.figure(figsize=(18, 12))
+        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+        
+        # Plot 1: Turnover over time
+        ax1 = fig.add_subplot(gs[0, :])
+        ax1.plot(self.turnover.index, self.turnover.values, linewidth=1.5, alpha=0.7, color='steelblue')
+        ax1.axhline(y=self.turnover.mean(), color='red', linestyle='--', label=f'Mean: {self.turnover.mean():.2%}', linewidth=2)
+        ax1.set_title('Portfolio Turnover Over Time', fontsize=14, fontweight='bold')
+        ax1.set_xlabel('Date')
+        ax1.set_ylabel('Turnover')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
+        
+        # Plot 2: Transaction costs over time
+        ax2 = fig.add_subplot(gs[1, 0])
+        ax2.plot(self.transaction_costs.index, self.transaction_costs.values * 10000, 
+                linewidth=1.5, alpha=0.7, color='darkred')
+        ax2.set_title('Transaction Costs Over Time', fontsize=12, fontweight='bold')
+        ax2.set_xlabel('Date')
+        ax2.set_ylabel('Transaction Cost (bps)')
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: Countries bought and sold per period
+        ax3 = fig.add_subplot(gs[1, 1])
+        ax3.plot(num_bought.index, num_bought.values, label='Bought', linewidth=1.5, color='green', alpha=0.7)
+        ax3.plot(num_sold.index, num_sold.values, label='Sold', linewidth=1.5, color='red', alpha=0.7)
+        ax3.set_title('Countries Traded per Period', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('Date')
+        ax3.set_ylabel('Number of Countries')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        
+        # Plot 4: Turnover distribution
+        ax4 = fig.add_subplot(gs[1, 2])
+        ax4.hist(self.turnover.values, bins=30, alpha=0.7, color='steelblue', edgecolor='black')
+        ax4.axvline(x=self.turnover.mean(), color='red', linestyle='--', 
+                   label=f'Mean: {self.turnover.mean():.2%}', linewidth=2)
+        ax4.set_title('Turnover Distribution', fontsize=12, fontweight='bold')
+        ax4.set_xlabel('Turnover')
+        ax4.set_ylabel('Frequency')
+        ax4.legend()
+        ax4.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: '{:.0%}'.format(x)))
+        
+        # Plot 5: Most traded countries (total)
+        ax5 = fig.add_subplot(gs[2, 0])
+        countries_total = [item[0] for item in most_traded[:10]]
+        counts_total = [item[1] for item in most_traded[:10]]
+        bars = ax5.barh(range(len(countries_total)), counts_total, color='purple', alpha=0.7)
+        ax5.set_yticks(range(len(countries_total)))
+        ax5.set_yticklabels(countries_total)
+        ax5.set_xlabel('Number of Trades')
+        ax5.set_title('Most Traded Countries', fontsize=12, fontweight='bold')
+        ax5.invert_yaxis()
+        ax5.grid(True, alpha=0.3, axis='x')
+        
+        # Plot 6: Gross vs Net cumulative returns
+        ax6 = fig.add_subplot(gs[2, 1])
+        cum_gross = (1 + self.returns).cumprod()
+        cum_net = (1 + self.returns_net).cumprod()
+        ax6.plot(cum_gross.index, cum_gross.values, label='Gross Returns', linewidth=2, color='green')
+        ax6.plot(cum_net.index, cum_net.values, label='Net Returns', linewidth=2, color='darkgreen', linestyle='--')
+        ax6.set_title('Cumulative Returns: Gross vs Net', fontsize=12, fontweight='bold')
+        ax6.set_xlabel('Date')
+        ax6.set_ylabel('Cumulative Return')
+        ax6.legend()
+        ax6.grid(True, alpha=0.3)
+        
+        # Plot 7: Transaction cost impact (cumulative)
+        ax7 = fig.add_subplot(gs[2, 2])
+        cum_tc = self.transaction_costs.cumsum()
+        ax7.fill_between(cum_tc.index, 0, cum_tc.values * 100, alpha=0.5, color='darkred')
+        ax7.plot(cum_tc.index, cum_tc.values * 100, linewidth=2, color='darkred')
+        ax7.set_title('Cumulative Transaction Costs', fontsize=12, fontweight='bold')
+        ax7.set_xlabel('Date')
+        ax7.set_ylabel('Cumulative TC (%)')
+        ax7.grid(True, alpha=0.3)
+        
+        plt.suptitle('Portfolio Turnover Analysis Dashboard', fontsize=16, fontweight='bold', y=0.995)
+        plt.show()
+    
+    def performance_attribution_analysis(self, plot=True):
+        """
+        Perform comprehensive performance attribution analysis.
+        
+        Analyzes the sources of portfolio returns using holding-based attribution:
+        - Return contribution by country
+        - Active contribution vs benchmark
+        - Top/bottom contributors
+        - Period-by-period attribution
+        - Cumulative attribution over time
+        
+        Follows industry best practices for performance attribution.
+        
+        Parameters
+        ----------
+        plot : bool, optional
+            Whether to generate visualizations (default True)
+        
+        Returns
+        -------
+        dict
+            Dictionary containing attribution analysis results
+        """
+        if self.returns is None:
+            raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
+        
+        print("=" * 80)
+        print("PERFORMANCE ATTRIBUTION ANALYSIS")
+        print("=" * 80)
+        
+        # Step 1: Calculate period returns for each country
+        period_country_returns = {}
+        
+        for idx, (d_sel, d_ret) in enumerate(self.date_tuples):
+            period_returns = self._calculate_period_returns(d_sel, d_ret)
+            period_country_returns[d_ret] = period_returns
+        
+        # Convert to DataFrame
+        returns_df = pd.DataFrame(period_country_returns).T
+        returns_df = returns_df.fillna(0)
+        
+        # Step 2: Calculate return contribution for each country in each period
+        # Contribution = Weight Ã— Return
+        contribution_df = pd.DataFrame(index=self.historical_weights.index)
+        
+        for country in self.historical_weights.columns:
+            if country in returns_df.columns:
+                contribution_df[country] = self.historical_weights[country] * returns_df[country]
+            else:
+                contribution_df[country] = 0.0
+        
+        # Step 3: Calculate active weights (portfolio weight - benchmark weight)
+        # For this strategy, benchmark weight is either explicit or 0 for countries
+        active_weights_df = self.historical_weights.copy()
+        if self.bmk in active_weights_df.columns:
+            # All non-benchmark positions are active
+            active_weights_df = active_weights_df.drop(columns=[self.bmk])
+        
+        # Step 4: Calculate active contribution
+        # Active Contribution = Weight Ã— (Country Return - Benchmark Return)
+        active_contribution_df = pd.DataFrame(index=self.historical_weights.index)
+        
+        for country in active_weights_df.columns:
+            if country in returns_df.columns:
+                country_active_return = returns_df[country] - self.benchmark_returns
+                active_contribution_df[country] = active_weights_df[country] * country_active_return
+            else:
+                active_contribution_df[country] = 0.0
+        
+        # Step 5: Calculate cumulative contributions
+        cumulative_contribution = contribution_df.sum(axis=0).sort_values(ascending=False)
+        cumulative_active_contribution = active_contribution_df.sum(axis=0).sort_values(ascending=False)
+        
+        # Step 6: Identify top and bottom contributors
+        top_n = 10
+        top_contributors = cumulative_contribution.head(top_n)
+        bottom_contributors = cumulative_contribution.tail(top_n)
+        
+        top_active_contributors = cumulative_active_contribution.head(top_n)
+        bottom_active_contributors = cumulative_active_contribution.tail(top_n)
+        
+        # Step 7: Calculate statistics
+        total_portfolio_return = self.returns.sum()
+        total_active_return = self.active_return.sum()
+        total_benchmark_return = self.benchmark_returns.sum()
+        
+        # Attribution accuracy check
+        sum_contributions = contribution_df.sum(axis=1).sum()
+        attribution_diff = total_portfolio_return - sum_contributions
+        
+        # Country participation statistics
+        country_participation = (self.historical_weights > 0).sum(axis=0).sort_values(ascending=False)
+        country_participation = country_participation[country_participation.index != self.bmk]
+        
+        avg_weight_by_country = self.historical_weights.mean(axis=0).sort_values(ascending=False)
+        avg_weight_by_country = avg_weight_by_country[avg_weight_by_country.index != self.bmk]
+        
+        # Step 8: Period analysis - best/worst performing periods
+        period_portfolio_returns = self.returns.copy()
+        best_periods = period_portfolio_returns.nlargest(5)
+        worst_periods = period_portfolio_returns.nsmallest(5)
+        
+        # Step 9: Calculate hit rate by country (% of positive contributions)
+        country_hit_rates = {}
+        for country in contribution_df.columns:
+            if country != self.bmk:
+                positive_periods = (contribution_df[country] > 0).sum()
+                total_periods_held = (self.historical_weights[country] > 0).sum()
+                if total_periods_held > 0:
+                    country_hit_rates[country] = positive_periods / total_periods_held
+        
+        hit_rate_series = pd.Series(country_hit_rates).sort_values(ascending=False)
+        
+        # Print Analysis Results
+        print(f"\nPORTFOLIO ATTRIBUTION SUMMARY:")
+        print(f"   Total Portfolio Return: {total_portfolio_return:.4%}")
+        print(f"   Total Benchmark Return: {total_benchmark_return:.4%}")
+        print(f"   Total Active Return: {total_active_return:.4%}")
+        print(f"   Attribution Check (should be ~0): {attribution_diff:.6%}")
+        
+        print(f"\nTOP {len(top_contributors)} CONTRIBUTING COUNTRIES (Cumulative):")
+        for i, (country, contrib) in enumerate(top_contributors.items(), 1):
+            pct_of_total = (contrib / total_portfolio_return * 100) if total_portfolio_return != 0 else 0
+            avg_weight = avg_weight_by_country.get(country, 0)
+            periods = country_participation.get(country, 0)
+            print(f"   {i}. {country}: {contrib:+.4%} ({pct_of_total:.1f}% of total) | "
+                  f"Avg Wgt: {avg_weight:.2%} | Periods: {periods}")
+        
+        print(f"\nBOTTOM {len(bottom_contributors)} CONTRIBUTING COUNTRIES (Cumulative):")
+        for i, (country, contrib) in enumerate(bottom_contributors.items(), 1):
+            pct_of_total = (contrib / total_portfolio_return * 100) if total_portfolio_return != 0 else 0
+            avg_weight = avg_weight_by_country.get(country, 0)
+            periods = country_participation.get(country, 0)
+            print(f"   {i}. {country}: {contrib:+.4%} ({pct_of_total:.1f}% of total) | "
+                  f"Avg Wgt: {avg_weight:.2%} | Periods: {periods}")
+        
+        print(f"\nTOP {len(top_active_contributors)} ACTIVE CONTRIBUTORS (vs Benchmark):")
+        for i, (country, contrib) in enumerate(top_active_contributors.items(), 1):
+            pct_of_active = (contrib / total_active_return * 100) if total_active_return != 0 else 0
+            print(f"   {i}. {country}: {contrib:+.4%} ({pct_of_active:.1f}% of active return)")
+        
+        print(f"\nBOTTOM {len(bottom_active_contributors)} ACTIVE CONTRIBUTORS (vs Benchmark):")
+        for i, (country, contrib) in enumerate(bottom_active_contributors.items(), 1):
+            pct_of_active = (contrib / total_active_return * 100) if total_active_return != 0 else 0
+            print(f"   {i}. {country}: {contrib:+.4%} ({pct_of_active:.1f}% of active return)")
+        
+        print(f"\nBEST PERFORMING PERIODS:")
+        for date, ret in best_periods.items():
+            # Find top contributor for this period
+            period_contribs = contribution_df.loc[date].sort_values(ascending=False)
+            top_country = period_contribs.index[0] if len(period_contribs) > 0 else "N/A"
+            top_contrib = period_contribs.iloc[0] if len(period_contribs) > 0 else 0
+            print(f"   {date.strftime('%Y-%m-%d')}: {ret:+.2%} | Top: {top_country} ({top_contrib:+.2%})")
+        
+        print(f"\nWORST PERFORMING PERIODS:")
+        for date, ret in worst_periods.items():
+            # Find worst contributor for this period
+            period_contribs = contribution_df.loc[date].sort_values(ascending=True)
+            worst_country = period_contribs.index[0] if len(period_contribs) > 0 else "N/A"
+            worst_contrib = period_contribs.iloc[0] if len(period_contribs) > 0 else 0
+            print(f"   {date.strftime('%Y-%m-%d')}: {ret:+.2%} | Worst: {worst_country} ({worst_contrib:+.2%})")
+        
+        print(f"\nTOP HIT RATES (% of Positive Contribution Periods):")
+        for i, (country, hit_rate) in enumerate(hit_rate_series.head(10).items(), 1):
+            periods_held = country_participation.get(country, 0)
+            print(f"   {i}. {country}: {hit_rate:.1%} | Periods Held: {periods_held}")
+        
+        # Generate visualizations if requested
+        if plot:
+            self._plot_attribution_analysis(
+                contribution_df, active_contribution_df,
+                cumulative_contribution, cumulative_active_contribution,
+                country_participation, avg_weight_by_country, hit_rate_series
+            )
+        
+        # Return comprehensive results
+        results = {
+            'contribution_by_period': contribution_df,
+            'active_contribution_by_period': active_contribution_df,
+            'cumulative_contribution': cumulative_contribution,
+            'cumulative_active_contribution': cumulative_active_contribution,
+            'top_contributors': top_contributors,
+            'bottom_contributors': bottom_contributors,
+            'top_active_contributors': top_active_contributors,
+            'bottom_active_contributors': bottom_active_contributors,
+            'country_participation': country_participation,
+            'avg_weight_by_country': avg_weight_by_country,
+            'hit_rates': hit_rate_series,
+            'total_return': total_portfolio_return,
+            'total_active_return': total_active_return,
+            'attribution_check': attribution_diff,
+            'best_periods': best_periods,
+            'worst_periods': worst_periods
+        }
+        
+        return results
+    
+    def _plot_attribution_analysis(self, contribution_df, active_contribution_df,
+                                    cumulative_contribution, cumulative_active_contribution,
+                                    country_participation, avg_weight_by_country, hit_rate_series):
+        """
+        Generate comprehensive attribution visualizations.
+        
+        Parameters
+        ----------
+        contribution_df : pd.DataFrame
+            Return contributions by country and period
+        active_contribution_df : pd.DataFrame
+            Active contributions by country and period
+        cumulative_contribution : pd.Series
+            Cumulative contribution by country
+        cumulative_active_contribution : pd.Series
+            Cumulative active contribution by country
+        country_participation : pd.Series
+            Number of periods each country was held
+        avg_weight_by_country : pd.Series
+            Average weight by country
+        hit_rate_series : pd.Series
+            Hit rate by country
+        """
+        fig = plt.figure(figsize=(20, 14))
+        gs = fig.add_gridspec(4, 3, hspace=0.35, wspace=0.3)
+        
+        # Plot 1: Top 10 Cumulative Contributors
+        ax1 = fig.add_subplot(gs[0, 0])
+        top_10 = cumulative_contribution.head(10)
+        colors_top = ['green' if x > 0 else 'red' for x in top_10.values]
+        bars = ax1.barh(range(len(top_10)), top_10.values, color=colors_top, alpha=0.7)
+        ax1.set_yticks(range(len(top_10)))
+        ax1.set_yticklabels(top_10.index, fontsize=9)
+        ax1.set_xlabel('Cumulative Contribution')
+        ax1.set_title('Top 10 Contributors (Total Return)', fontsize=11, fontweight='bold')
+        ax1.invert_yaxis()
+        ax1.grid(True, alpha=0.3, axis='x')
+        ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: '{:.1%}'.format(x)))
+        
+        # Plot 2: Bottom 10 Contributors
+        ax2 = fig.add_subplot(gs[0, 1])
+        bottom_10 = cumulative_contribution.tail(10).sort_values()
+        colors_bottom = ['green' if x > 0 else 'red' for x in bottom_10.values]
+        ax2.barh(range(len(bottom_10)), bottom_10.values, color=colors_bottom, alpha=0.7)
+        ax2.set_yticks(range(len(bottom_10)))
+        ax2.set_yticklabels(bottom_10.index, fontsize=9)
+        ax2.set_xlabel('Cumulative Contribution')
+        ax2.set_title('Bottom 10 Contributors (Total Return)', fontsize=11, fontweight='bold')
+        ax2.invert_yaxis()
+        ax2.grid(True, alpha=0.3, axis='x')
+        ax2.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: '{:.1%}'.format(x)))
+        
+        # Plot 3: Top 10 Active Contributors
+        ax3 = fig.add_subplot(gs[0, 2])
+        top_10_active = cumulative_active_contribution.head(10)
+        colors_active = ['green' if x > 0 else 'red' for x in top_10_active.values]
+        ax3.barh(range(len(top_10_active)), top_10_active.values, color=colors_active, alpha=0.7)
+        ax3.set_yticks(range(len(top_10_active)))
+        ax3.set_yticklabels(top_10_active.index, fontsize=9)
+        ax3.set_xlabel('Active Contribution')
+        ax3.set_title('Top 10 Active Contributors (vs Benchmark)', fontsize=11, fontweight='bold')
+        ax3.invert_yaxis()
+        ax3.grid(True, alpha=0.3, axis='x')
+        ax3.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: '{:.1%}'.format(x)))
+        
+        # Plot 4: Cumulative Attribution Over Time (Top 5)
+        ax4 = fig.add_subplot(gs[1, :])
+        top_5_countries = cumulative_contribution.head(5).index
+        for country in top_5_countries:
+            if country in contribution_df.columns:
+                cum_contrib = contribution_df[country].cumsum()
+                ax4.plot(cum_contrib.index, cum_contrib.values, label=country, linewidth=2, alpha=0.8)
+        ax4.set_title('Cumulative Attribution Over Time (Top 5 Contributors)', fontsize=12, fontweight='bold')
+        ax4.set_xlabel('Date')
+        ax4.set_ylabel('Cumulative Contribution')
+        ax4.legend(loc='best', fontsize=9)
+        ax4.grid(True, alpha=0.3)
+        ax4.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.1%}'.format(y)))
+        
+        # Plot 5: Period-by-Period Attribution (Stacked Area - Top 5)
+        ax5 = fig.add_subplot(gs[2, :])
+        top_5_df = contribution_df[top_5_countries].copy()
+        # Fill any missing dates
+        top_5_df = top_5_df.fillna(0)
+        ax5.stackplot(top_5_df.index, *[top_5_df[col].values for col in top_5_df.columns],
+                     labels=top_5_df.columns, alpha=0.7)
+        ax5.set_title('Period-by-Period Attribution (Top 5 Contributors - Stacked)', fontsize=12, fontweight='bold')
+        ax5.set_xlabel('Date')
+        ax5.set_ylabel('Period Contribution')
+        ax5.legend(loc='upper left', fontsize=9)
+        ax5.grid(True, alpha=0.3)
+        
+        # Plot 6: Country Participation (Periods Held)
+        ax6 = fig.add_subplot(gs[3, 0])
+        top_participation = country_participation.head(15)
+        ax6.barh(range(len(top_participation)), top_participation.values, color='steelblue', alpha=0.7)
+        ax6.set_yticks(range(len(top_participation)))
+        ax6.set_yticklabels(top_participation.index, fontsize=8)
+        ax6.set_xlabel('Number of Periods')
+        ax6.set_title('Country Participation (Periods Held)', fontsize=11, fontweight='bold')
+        ax6.invert_yaxis()
+        ax6.grid(True, alpha=0.3, axis='x')
+        
+        # Plot 7: Average Weight by Country
+        ax7 = fig.add_subplot(gs[3, 1])
+        top_weights = avg_weight_by_country.head(15)
+        ax7.barh(range(len(top_weights)), top_weights.values, color='purple', alpha=0.7)
+        ax7.set_yticks(range(len(top_weights)))
+        ax7.set_yticklabels(top_weights.index, fontsize=8)
+        ax7.set_xlabel('Average Weight')
+        ax7.set_title('Average Portfolio Weight by Country', fontsize=11, fontweight='bold')
+        ax7.invert_yaxis()
+        ax7.grid(True, alpha=0.3, axis='x')
+        ax7.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: '{:.1%}'.format(x)))
+        
+        # Plot 8: Hit Rate by Country
+        ax8 = fig.add_subplot(gs[3, 2])
+        top_hit_rates = hit_rate_series.head(15)
+        colors_hit = ['green' if x >= 0.5 else 'orange' for x in top_hit_rates.values]
+        ax8.barh(range(len(top_hit_rates)), top_hit_rates.values, color=colors_hit, alpha=0.7)
+        ax8.set_yticks(range(len(top_hit_rates)))
+        ax8.set_yticklabels(top_hit_rates.index, fontsize=8)
+        ax8.set_xlabel('Hit Rate (% Positive)')
+        ax8.set_title('Hit Rate by Country (% Positive Contributions)', fontsize=11, fontweight='bold')
+        ax8.axvline(x=0.5, color='red', linestyle='--', alpha=0.5, linewidth=1)
+        ax8.invert_yaxis()
+        ax8.grid(True, alpha=0.3, axis='x')
+        ax8.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: '{:.0%}'.format(x)))
+        
+        plt.suptitle('Performance Attribution Analysis Dashboard', fontsize=16, fontweight='bold', y=0.995)
+        plt.show()
+    
+    def IC_analysis(self, rolling_window=20, plot=True):
+        """
+        Perform Information Coefficient (IC) analysis.
+        
+        Measures the predictive power of the scoring signal by calculating the
+        rank correlation between:
+        - Signal (absolute scores or relative score changes based on selection_criteria)
+        - Forward returns (t+1)
+        
+        The IC measures how well the signal predicts future returns, which is
+        critical for evaluating strategy effectiveness.
+        
+        Parameters
+        ----------
+        rolling_window : int, optional
+            Window size for rolling IC calculation (default 20 periods)
+        plot : bool, optional
+            Whether to generate visualizations (default True)
+        
+        Returns
+        -------
+        dict
+            Dictionary containing IC analysis results including:
+            - IC by period
+            - Rolling IC
+            - Mean IC and statistics
+            - IC t-statistics and p-values
+        """
+        if self.returns is None:
+            raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
+        
+        print("=" * 80)
+        print("INFORMATION COEFFICIENT (IC) ANALYSIS")
+        print("=" * 80)
+        print(f"Selection Criteria: {self.selection_criteria.upper()}")
+        print(f"Rolling Window: {rolling_window} periods")
+        
+        # Step 1: Prepare signal data based on selection criteria
+        if self.selection_criteria == "absolute":
+            # Use absolute scores as signal
+            signal_df = self.normalized_score.copy()
+            signal_description = "Absolute Scores"
+        else:  # relative
+            # Use score changes as signal
+            signal_df = self.normalized_score.diff(self.periodicity)
+            signal_description = "Relative Score Changes"
+        
+        print(f"Signal Type: {signal_description}")
+        
+        # Step 2: Calculate forward returns for each country
+        forward_returns_dict = {}
+        
+        for idx, (d_sel, d_ret) in enumerate(self.date_tuples):
+            # Get forward returns from d_sel to d_ret
+            forward_returns = self._calculate_period_returns(d_sel, d_ret)
+            forward_returns_dict[d_sel] = forward_returns
+        
+        # Convert to DataFrame
+        forward_returns_df = pd.DataFrame(forward_returns_dict).T
+        forward_returns_df = forward_returns_df.drop(columns=[self.bmk], errors='ignore')
+        
+        # Step 3: Calculate IC for each period
+        ic_values = []
+        ic_dates = []
+        ic_details = []
+        
+        from scipy.stats import spearmanr, pearsonr
+        
+        for date in forward_returns_df.index:
+            if date in signal_df.index:
+                # Get signal and forward returns at this date
+                signal = signal_df.loc[date]
+                fwd_returns = forward_returns_df.loc[date]
+                
+                # Get common countries (both have data)
+                common_countries = signal.dropna().index.intersection(fwd_returns.dropna().index)
+                
+                if len(common_countries) >= 3:  # Need at least 3 points for correlation
+                    signal_values = signal[common_countries].values
+                    return_values = fwd_returns[common_countries].values
+                    
+                    # Calculate Spearman rank correlation (industry standard for IC)
+                    ic, p_value = spearmanr(signal_values, return_values)
+                    
+                    ic_values.append(ic)
+                    ic_dates.append(date)
+                    ic_details.append({
+                        'date': date,
+                        'ic': ic,
+                        'p_value': p_value,
+                        'num_countries': len(common_countries)
+                    })
+        
+        # Convert to Series
+        ic_series = pd.Series(ic_values, index=ic_dates, name='IC')
+        
+        # Step 4: Calculate IC statistics
+        mean_ic = ic_series.mean()
+        median_ic = ic_series.median()
+        std_ic = ic_series.std()
+        
+        # IC t-statistic: measures statistical significance of mean IC
+        # t = mean_IC / (std_IC / sqrt(n))
+        n_periods = len(ic_series)
+        ic_t_stat = mean_ic / (std_ic / np.sqrt(n_periods)) if std_ic != 0 else 0
+        
+        # Calculate IC information ratio (ICIR): mean IC / std IC
+        icir = mean_ic / std_ic if std_ic != 0 else 0
+        
+        # Hit rate: % of positive ICs
+        hit_rate = (ic_series > 0).sum() / len(ic_series) if len(ic_series) > 0 else 0
+        
+        # Step 5: Calculate rolling IC
+        rolling_ic = ic_series.rolling(window=rolling_window, min_periods=rolling_window//2).mean()
+        rolling_ic_std = ic_series.rolling(window=rolling_window, min_periods=rolling_window//2).std()
+        
+        # Step 6: Calculate cumulative IC
+        cumulative_ic = ic_series.cumsum()
+        
+        # Step 7: Calculate IC decay (forward looking analysis if possible)
+        # This would show how IC changes at different forward horizons
+        # For now, we use the current period forward returns
+        
+        # Print results
+        print(f"\nIC STATISTICS:")
+        print(f"   Number of Periods: {n_periods}")
+        print(f"   Mean IC: {mean_ic:.4f}")
+        print(f"   Median IC: {median_ic:.4f}")
+        print(f"   Std Dev IC: {std_ic:.4f}")
+        print(f"   IC t-statistic: {ic_t_stat:.2f}")
+        print(f"   IC Information Ratio (ICIR): {icir:.4f}")
+        print(f"   Hit Rate (% Positive IC): {hit_rate:.2%}")
+        print(f"   Min IC: {ic_series.min():.4f}")
+        print(f"   Max IC: {ic_series.max():.4f}")
+        
+        # Statistical significance interpretation
+        print(f"\nSTATISTICAL SIGNIFICANCE:")
+        if abs(ic_t_stat) > 2.58:
+            print(f"   Mean IC is HIGHLY SIGNIFICANT (99% confidence, |t| > 2.58)")
+        elif abs(ic_t_stat) > 1.96:
+            print(f"   Mean IC is SIGNIFICANT (95% confidence, |t| > 1.96)")
+        elif abs(ic_t_stat) > 1.65:
+            print(f"   Mean IC is MARGINALLY SIGNIFICANT (90% confidence, |t| > 1.65)")
+        else:
+            print(f"   Mean IC is NOT STATISTICALLY SIGNIFICANT (|t| < 1.65)")
+        
+        # IC Quality interpretation
+        print(f"\nIC QUALITY ASSESSMENT:")
+        if abs(mean_ic) > 0.1:
+            print(f"   EXCELLENT predictive power (|IC| > 0.10)")
+        elif abs(mean_ic) > 0.05:
+            print(f"   GOOD predictive power (|IC| > 0.05)")
+        elif abs(mean_ic) > 0.03:
+            print(f"   MODERATE predictive power (|IC| > 0.03)")
+        elif abs(mean_ic) > 0.01:
+            print(f"   WEAK predictive power (|IC| > 0.01)")
+        else:
+            print(f"   VERY WEAK predictive power (|IC| < 0.01)")
+        
+        # ICIR Quality interpretation
+        print(f"\nICIR (IC Information Ratio) ASSESSMENT:")
+        if abs(icir) > 0.5:
+            print(f"   EXCELLENT signal consistency (|ICIR| > 0.5)")
+        elif abs(icir) > 0.3:
+            print(f"   GOOD signal consistency (|ICIR| > 0.3)")
+        elif abs(icir) > 0.1:
+            print(f"   MODERATE signal consistency (|ICIR| > 0.1)")
+        else:
+            print(f"   POOR signal consistency (|ICIR| < 0.1)")
+        
+        # Best and worst IC periods
+        print(f"\nTOP 5 IC PERIODS:")
+        top_5_ic = ic_series.nlargest(5)
+        for date, ic in top_5_ic.items():
+            print(f"   {date.strftime('%Y-%m-%d')}: IC = {ic:.4f}")
+        
+        print(f"\nBOTTOM 5 IC PERIODS:")
+        bottom_5_ic = ic_series.nsmallest(5)
+        for date, ic in bottom_5_ic.items():
+            print(f"   {date.strftime('%Y-%m-%d')}: IC = {ic:.4f}")
+        
+        # Generate visualizations if requested
+        if plot:
+            self._plot_IC_analysis(ic_series, rolling_ic, rolling_ic_std, 
+                                  cumulative_ic, rolling_window)
+        
+        # Return comprehensive results
+        results = {
+            'ic_series': ic_series,
+            'rolling_ic': rolling_ic,
+            'rolling_ic_std': rolling_ic_std,
+            'cumulative_ic': cumulative_ic,
+            'statistics': {
+                'mean_ic': mean_ic,
+                'median_ic': median_ic,
+                'std_ic': std_ic,
+                'ic_t_stat': ic_t_stat,
+                'icir': icir,
+                'hit_rate': hit_rate,
+                'min_ic': ic_series.min(),
+                'max_ic': ic_series.max(),
+                'num_periods': n_periods
+            },
+            'ic_details': ic_details,
+            'signal_type': signal_description
+        }
+        
+        return results
+    
+    def _plot_IC_analysis(self, ic_series, rolling_ic, rolling_ic_std, 
+                          cumulative_ic, rolling_window):
+        """
+        Generate comprehensive IC analysis visualizations.
+        
+        Parameters
+        ----------
+        ic_series : pd.Series
+            IC values by period
+        rolling_ic : pd.Series
+            Rolling mean IC
+        rolling_ic_std : pd.Series
+            Rolling standard deviation of IC
+        cumulative_ic : pd.Series
+            Cumulative IC
+        rolling_window : int
+            Rolling window size
+        """
+        fig = plt.figure(figsize=(18, 12))
+        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+        
+        # Plot 1: IC Over Time
+        ax1 = fig.add_subplot(gs[0, :])
+        ax1.bar(ic_series.index, ic_series.values, alpha=0.6, 
+               color=['green' if x > 0 else 'red' for x in ic_series.values],
+               width=np.diff(ic_series.index.append(pd.Index([ic_series.index[-1]]))).astype('timedelta64[D]').astype(int)[0] * 0.8)
+        ax1.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+        ax1.axhline(y=ic_series.mean(), color='blue', linestyle='--', 
+                   linewidth=2, label=f'Mean IC: {ic_series.mean():.4f}')
+        ax1.set_title('Information Coefficient (IC) Over Time', fontsize=14, fontweight='bold')
+        ax1.set_xlabel('Date')
+        ax1.set_ylabel('IC (Spearman Correlation)')
+        ax1.legend(loc='best')
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Rolling IC
+        ax2 = fig.add_subplot(gs[1, 0:2])
+        ax2.plot(rolling_ic.index, rolling_ic.values, linewidth=2, color='blue', label=f'{rolling_window}-Period Rolling IC')
+        # Add confidence bands
+        if rolling_ic_std is not None and not rolling_ic_std.isna().all():
+            upper_band = rolling_ic + 1.96 * rolling_ic_std / np.sqrt(rolling_window)
+            lower_band = rolling_ic - 1.96 * rolling_ic_std / np.sqrt(rolling_window)
+            ax2.fill_between(rolling_ic.index, lower_band, upper_band, alpha=0.2, color='blue')
+        ax2.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.5)
+        ax2.axhline(y=ic_series.mean(), color='red', linestyle='--', 
+                   linewidth=1.5, label=f'Overall Mean: {ic_series.mean():.4f}')
+        ax2.set_title(f'Rolling {rolling_window}-Period IC', fontsize=12, fontweight='bold')
+        ax2.set_xlabel('Date')
+        ax2.set_ylabel('Rolling IC')
+        ax2.legend(loc='best')
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: IC Distribution
+        ax3 = fig.add_subplot(gs[1, 2])
+        ax3.hist(ic_series.values, bins=30, alpha=0.7, color='steelblue', edgecolor='black')
+        ax3.axvline(x=0, color='black', linestyle='--', linewidth=1)
+        ax3.axvline(x=ic_series.mean(), color='red', linestyle='--', 
+                   linewidth=2, label=f'Mean: {ic_series.mean():.4f}')
+        ax3.axvline(x=ic_series.median(), color='orange', linestyle='--', 
+                   linewidth=2, label=f'Median: {ic_series.median():.4f}')
+        ax3.set_title('IC Distribution', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('IC')
+        ax3.set_ylabel('Frequency')
+        ax3.legend(loc='best')
+        ax3.grid(True, alpha=0.3, axis='y')
+        
+        # Plot 4: Cumulative IC
+        ax4 = fig.add_subplot(gs[2, 0:2])
+        ax4.plot(cumulative_ic.index, cumulative_ic.values, linewidth=2, color='darkgreen')
+        ax4.fill_between(cumulative_ic.index, 0, cumulative_ic.values, alpha=0.3, color='green')
+        ax4.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.5)
+        ax4.set_title('Cumulative IC Over Time', fontsize=12, fontweight='bold')
+        ax4.set_xlabel('Date')
+        ax4.set_ylabel('Cumulative IC')
+        ax4.grid(True, alpha=0.3)
+        
+        # Add trend line
+        from scipy import stats
+        x_numeric = np.arange(len(cumulative_ic))
+        slope, intercept, r_value, p_value, std_err = stats.linregress(x_numeric, cumulative_ic.values)
+        trend_line = slope * x_numeric + intercept
+        ax4.plot(cumulative_ic.index, trend_line, 'r--', linewidth=2, 
+                alpha=0.7, label=f'Trend (slope={slope:.4f})')
+        ax4.legend(loc='best')
+        
+        # Plot 5: IC Statistics Summary (Text Box)
+        ax5 = fig.add_subplot(gs[2, 2])
+        ax5.axis('off')
+        
+        mean_ic = ic_series.mean()
+        std_ic = ic_series.std()
+        ic_t_stat = mean_ic / (std_ic / np.sqrt(len(ic_series))) if std_ic != 0 else 0
+        icir = mean_ic / std_ic if std_ic != 0 else 0
+        hit_rate = (ic_series > 0).sum() / len(ic_series)
+        
+        stats_text = f"""
+        IC STATISTICS SUMMARY
+        {'=' * 35}
+        
+        Mean IC:           {mean_ic:>10.4f}
+        Median IC:         {ic_series.median():>10.4f}
+        Std Dev IC:        {std_ic:>10.4f}
+        
+        IC t-statistic:    {ic_t_stat:>10.2f}
+        ICIR:              {icir:>10.4f}
+        Hit Rate:          {hit_rate:>10.2%}
+        
+        Min IC:            {ic_series.min():>10.4f}
+        Max IC:            {ic_series.max():>10.4f}
+        
+        Periods:           {len(ic_series):>10d}
+        
+        {'=' * 35}
+        Significance:
+        {'Significant' if abs(ic_t_stat) > 1.96 else 'Not Significant'}
+        
+        Quality:
+        {'Strong' if abs(mean_ic) > 0.05 else 'Weak'}
+        """
+        
+        ax5.text(0.1, 0.95, stats_text, transform=ax5.transAxes,
+                fontsize=10, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+        
+        plt.suptitle('Information Coefficient (IC) Analysis Dashboard', 
+                    fontsize=16, fontweight='bold', y=0.995)
+        plt.show()
+    
+    def plot_cumulative_returns(self):
+        """Plot cumulative returns for portfolio, benchmark, and active."""
+        if self.returns is None:
+            raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
+        
+        cum_portfolio = (1 + self.returns).cumprod()
+        cum_benchmark = (1 + self.benchmark_returns).cumprod()
+        cum_active = (1 + self.active_return).cumprod()
+        
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
+        
+        # Plot 1: Portfolio vs Benchmark
+        ax1.plot(cum_portfolio.index, cum_portfolio.values, label='Portfolio', linewidth=2)
+        ax1.plot(cum_benchmark.index, cum_benchmark.values, label='Benchmark', linewidth=2, alpha=0.7)
+        ax1.set_title('Cumulative Returns: Portfolio vs Benchmark', fontsize=14, fontweight='bold')
+        ax1.set_xlabel('Date')
+        ax1.set_ylabel('Cumulative Return')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Active Return
+        ax2.plot(cum_active.index, cum_active.values, label='Active Return', color='green', linewidth=2)
+        ax2.axhline(y=1, color='black', linestyle='--', alpha=0.5)
+        ax2.set_title('Cumulative Active Returns', fontsize=14, fontweight='bold')
+        ax2.set_xlabel('Date')
+        ax2.set_ylabel('Cumulative Active Return')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+    
+    def plot_weights_over_time(self, top_n=10):
+        """
+        Plot portfolio weights over time for top N most frequently selected countries.
+        
+        Parameters
+        ----------
+        top_n : int, optional
+            Number of top countries to display (default 10)
+        """
+        if self.historical_weights is None:
+            raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
+        
+        # Get top N countries by average weight (excluding benchmark)
+        avg_weights = self.historical_weights.drop(columns=[self.bmk], errors='ignore').mean()
+        top_countries = avg_weights.nlargest(top_n).index.tolist()
+        
+        # Plot
+        fig, ax = plt.subplots(figsize=(14, 8))
+        
+        # Plot benchmark
+        if self.bmk in self.historical_weights.columns:
+            ax.plot(self.historical_weights.index, 
+                   self.historical_weights[self.bmk], 
+                   label=self.bmk, 
+                   linewidth=2, 
+                   linestyle='--', 
+                   color='black', 
+                   alpha=0.7)
+        
+        # Plot top countries
+        for country in top_countries:
+            ax.plot(self.historical_weights.index, 
+                   self.historical_weights[country], 
+                   label=country, 
+                   alpha=0.7)
+        
+        ax.set_title(f'Portfolio Weights Over Time (Top {top_n} Countries + Benchmark)', 
+                    fontsize=14, fontweight='bold')
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Weight')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()

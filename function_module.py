@@ -463,18 +463,18 @@ def transform_process_data(dataFrames: Dict[str, pd.DataFrame],
             try:
                 output_path = os.path.join(output_folder, f"{key}.xlsx")
                 df.to_excel(output_path, index=True)
-                print(f"  ✓ Exported {key} to {output_path}")
+                print(f"  Exported {key} to {output_path}")
             except Exception as e:
                 warnings.warn(f"Failed to export {key}: {str(e)}")
         
-        print(f"\n✓ Data transformation completed successfully!")
-        print(f"✓ Created {len(processed_data)} processed datasets")
-        print(f"✓ Files exported to: {output_folder}/")
+        print(f"\nData transformation completed successfully!")
+        print(f"Created {len(processed_data)} processed datasets")
+        print(f"Files exported to: {output_folder}/")
         
         return processed_data
         
     except Exception as e:
-        print(f"❌ Error during data transformation: {str(e)}")
+        print(f"Error during data transformation: {str(e)}")
         raise
 
 
@@ -512,9 +512,9 @@ def validate_inputs(dataFrames: Dict[str, pd.DataFrame], classification: pd.Data
     if missing_essential:
         warnings.warn(f"Missing essential metrics: {missing_essential}. Some calculations may fail.")
     
-    print(f"✓ Input validation passed")
-    print(f"✓ Available metrics: {len(available_metrics)}")
-    print(f"✓ Classification entries: {len(classification)}")
+    print(f"Input validation passed")
+    print(f"Available metrics: {len(available_metrics)}")
+    print(f"Classification entries: {len(classification)}")
     
     return True
 
@@ -548,11 +548,11 @@ def explore_data(dataFrames, regions_dict):
         regions_dict (dict): Regional classifications
     """
     print("\n" + "=" * 50)
-    print("📊 QUICK DATA EXPLORATION")
+    print("QUICK DATA EXPLORATION")
     print("=" * 50)
     
     # Show available metrics
-    print(f"\n📈 Available Metrics ({len(dataFrames)}):")
+    print(f"\nAvailable Metrics ({len(dataFrames)}):")
     metrics_list = list(dataFrames.keys())
     for i, metric in enumerate(metrics_list[:15], 1):  # Show first 15
         print(f"   {i:2d}. {metric}")
@@ -560,19 +560,19 @@ def explore_data(dataFrames, regions_dict):
         print(f"   ... and {len(metrics_list) - 15} more metrics")
     
     # Show regional breakdowns
-    print(f"\n🌍 Regional Classifications:")
+    print(f"\nRegional Classifications:")
     for region, countries in regions_dict.items():
         print(f"   {region:8s}: {len(countries):2d} countries")
     
     # Show sample data ranges
     if 'Price' in dataFrames:
         price_data = dataFrames['Price']
-        print(f"\n📅 Sample Data Range (Price):")
+        print(f"\nSample Data Range (Price):")
         print(f"   Start Date: {price_data.index.min().strftime('%Y-%m-%d')}")
         print(f"   End Date:   {price_data.index.max().strftime('%Y-%m-%d')}")
         print(f"   Countries:  {len(price_data.columns)}")
     
-    print(f"\n✅ Data ready for quantitative analysis!")
+    print(f"\nData ready for quantitative analysis!")
     
 
 class QuantMetricsTransformer:
@@ -1042,7 +1042,7 @@ class QuantMetricsTransformer:
             print(f"Total transformed metrics: {actual_count}")
             print(f"Expected transformed metrics: {expected_count}")
             print(f"Skipped metrics: {self.transform_stats['skipped']}")
-            print(f"Validation: {'✓ PASSED' if validation_passed else '✗ FAILED'}")
+            print(f"Validation: {'PASSED' if validation_passed else 'FAILED'}")
         
         return self
     

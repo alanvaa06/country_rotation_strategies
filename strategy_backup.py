@@ -57,12 +57,12 @@ def run_inputs():
         # ==========================================
         # STEP 1: LOAD RAW DATA
         # ==========================================
-        print("\n🔄 STEP 1: Loading raw data from Excel files...")
+        print("\nSTEP 1: Loading raw data from Excel files...")
         
         dataFrames = fm.read_excel_files_to_dict('Inputs')
         fileNames = list(dataFrames.keys())
         
-        print(f"✅ Successfully loaded {len(dataFrames)} datasets:")
+        print(f"Successfully loaded {len(dataFrames)} datasets:")
         for i, name in enumerate(fileNames[:5], 1):  # Show first 5
             print(f"   {i}. {name}")
         if len(fileNames) > 5:
@@ -70,39 +70,39 @@ def run_inputs():
         
         # Quick data check
         if 'Assets' in dataFrames:
-            print(f"📊 Sample data shape (Assets): {dataFrames['Assets'].shape}")
+            print(f"Sample data shape (Assets): {dataFrames['Assets'].shape}")
         
         # ==========================================
         # STEP 2: LOAD CLASSIFICATION DATA
         # ==========================================
-        print("\n🔄 STEP 2: Loading classification data...")
+        print("\nSTEP 2: Loading classification data...")
         
         classification, classification_metricas, classification_map = fm.load_classification_data()
         
-        print(f"✅ Classification data loaded:")
-        print(f"   📍 Countries: {len(classification)}")
-        print(f"   📊 Metrics mapping: {len(classification_map)} entries")
+        print(f"Classification data loaded:")
+        print(f"   Countries: {len(classification)}")
+        print(f"   Metrics mapping: {len(classification_map)} entries")
         
         # ==========================================
         # STEP 3: DATA VALIDATION
         # ==========================================
-        print("\n🔄 STEP 3: Validating input data...")
+        print("\nSTEP 3: Validating input data...")
         
         fm.validate_inputs(dataFrames, classification)
         
         # ==========================================
         # STEP 4: REMOVE WEEKENDS
         # ==========================================
-        print("\n🔄 STEP 4: Removing weekends from time series...")
+        print("\nSTEP 4: Removing weekends from time series...")
         
         dataFrames = fm.remove_weekends_optimized(dataFrames)
         
-        print("✅ Weekend removal completed for all datasets")
+        print("Weekend removal completed for all datasets")
         
         # ==========================================
         # STEP 5: SLICE DATA AND DROP COUNTRIES
         # ==========================================
-        print("\n🔄 STEP 5: Slicing data and filtering countries...")
+        print("\nSTEP 5: Slicing data and filtering countries...")
         
         # Default: slice from 2010-01-01 and drop Saudi Arabia
         dataFrames = fm.slice_data_frames_by_date(
@@ -111,23 +111,23 @@ def run_inputs():
             columns_to_drop=['Saudi Arabia']
         )
         
-        print("✅ Data slicing and country filtering completed")
+        print("Data slicing and country filtering completed")
         
         # ==========================================
         # STEP 6: CREATE REGIONAL CLASSIFICATIONS
         # ==========================================
-        print("\n🔄 STEP 6: Creating regional classifications...")
+        print("\nSTEP 6: Creating regional classifications...")
         
         regions_dict = fm.get_regions_dict(classification)
         
-        print(f"✅ Regional classifications created:")
+        print(f"Regional classifications created:")
         for region, countries in regions_dict.items():
-            print(f"   🌍 {region}: {len(countries)} countries")
+            print(f"   {region}: {len(countries)} countries")
         
         # ==========================================
         # STEP 7: COMPREHENSIVE DATA PROCESSING
         # ==========================================
-        print("\n🔄 STEP 7: Processing and transforming financial data...")
+        print("\nSTEP 7: Processing and transforming financial data...")
         print("This includes:")
         print("   • Regional aggregations")
         print("   • Growth metrics calculation")
@@ -146,10 +146,10 @@ def run_inputs():
         # STEP 8: FINAL SUMMARY
         # ==========================================
         print("\n" + "=" * 60)
-        print("🎉 PIPELINE EXECUTION COMPLETED SUCCESSFULLY!")
+        print("PIPELINE EXECUTION COMPLETED SUCCESSFULLY!")
         print("=" * 60)
         
-        print(f"\n📈 PROCESSING SUMMARY:")
+        print(f"\nPROCESSING SUMMARY:")
         print(f"   • Original datasets: {len(fileNames)}")
         print(f"   • Final processed datasets: {len(processed_data)}")
         print(f"   • Countries in classification: {len(classification)}")
@@ -159,21 +159,21 @@ def run_inputs():
         # Show some key metrics that were created
         derived_metrics = [k for k in processed_data.keys() if k not in fileNames]
         if derived_metrics:
-            print(f"\n🔧 NEW DERIVED METRICS ({len(derived_metrics)}):")
+            print(f"\nNEW DERIVED METRICS ({len(derived_metrics)}):")
             for i, metric in enumerate(derived_metrics[:10], 1):  # Show first 10
                 print(f"   {i}. {metric}")
             if len(derived_metrics) > 10:
                 print(f"   ... and {len(derived_metrics) - 10} more derived metrics")
         
-        print(f"\n✅ All processed data exported to: ProcessedInputs/")
-        print(f"✅ Ready for quantitative analysis and strategy implementation!")
+        print(f"\nAll processed data exported to: ProcessedInputs/")
+        print(f"Ready for quantitative analysis and strategy implementation!")
         
         return processed_data, regions_dict, classification
         
     except Exception as e:
-        print(f"\n❌ ERROR IN PIPELINE EXECUTION:")
+        print(f"\nERROR IN PIPELINE EXECUTION:")
         print(f"   {str(e)}")
-        print(f"\n🔧 Please check your data files and try again.")
+        print(f"\nPlease check your data files and try again.")
         raise
 
 
@@ -185,7 +185,7 @@ processed_data, regions_dict, classification = run_inputs()
 # Make key variables available in the global scope for interactive use
 dataFrames = processed_data
 
-print(f"\n📋 VARIABLES AVAILABLE FOR ANALYSIS:")
+print(f"\nVARIABLES AVAILABLE FOR ANALYSIS:")
 print(f"   • dataFrames: {len(dataFrames)} processed datasets")
 print(f"   • regions_dict: Regional country groupings")
 print(f"   • classification: Country classification DataFrame")
@@ -449,17 +449,17 @@ class CountryFactorSelectionFramework:
                     # Invert the factor (multiply by -1)
                     corrected_dataFrames[factor_name] = -factor_df
                     correction_summary['inverted'].append(factor_name)
-                    print(f"  ✓ Inverted {factor_name} (lower was better)")
+                    print(f"  Inverted {factor_name} (lower was better)")
                 else:
                     # Keep as-is (higher is better)
                     corrected_dataFrames[factor_name] = factor_df.copy()
                     correction_summary['kept_as_is'].append(factor_name)
-                    print(f"  ✓ Kept {factor_name} as-is (higher is better)")
+                    print(f"  Kept {factor_name} as-is (higher is better)")
             else:
                 # Unknown factor - keep as-is but flag for review
                 corrected_dataFrames[factor_name] = factor_df.copy()
                 correction_summary['unknown_factors'].append(factor_name)
-                print(f"  ⚠️  Unknown factor {factor_name} - kept as-is (please review directionality)")
+                print(f"  Unknown factor {factor_name} - kept as-is (please review directionality)")
         
         # Store correction summary
         self.results['signal_corrections'] = correction_summary
@@ -470,7 +470,7 @@ class CountryFactorSelectionFramework:
         print(f"  Unknown factors: {len(correction_summary['unknown_factors'])}")
         
         if correction_summary['unknown_factors']:
-            print(f"  ⚠️  Please review directionality for: {correction_summary['unknown_factors']}")
+            print(f"  Please review directionality for: {correction_summary['unknown_factors']}")
         
         return corrected_dataFrames
     
@@ -515,14 +515,14 @@ class CountryFactorSelectionFramework:
                     
                     if coverage >= self.min_data_coverage:
                         factor_panels[metric_name] = stacked
-                        print(f"    ✓ {metric_name}: {coverage:.1%} coverage, {stacked.notna().sum()} valid observations")
+                        print(f"    {metric_name}: {coverage:.1%} coverage, {stacked.notna().sum()} valid observations")
                     else:
-                        print(f"    ✗ {metric_name}: {coverage:.1%} coverage (below {self.min_data_coverage:.1%} threshold)")
+                        print(f"    {metric_name}: {coverage:.1%} coverage (below {self.min_data_coverage:.1%} threshold)")
                         
                 except Exception as e:
-                    print(f"    ✗ Error processing {metric_name}: {e}")
+                    print(f"    Error processing {metric_name}: {e}")
             else:
-                print(f"  ✗ Skipping {metric_name}: empty or invalid DataFrame")
+                print(f"  Skipping {metric_name}: empty or invalid DataFrame")
         
         # Step 2: Combine all factors into single DataFrame
         print(f"\nCombining {len(factor_panels)} qualifying metrics...")
@@ -606,7 +606,7 @@ class CountryFactorSelectionFramework:
                     print(f"    Warning: Error processing date {date}: {e}")
                     continue
             
-            print(f"✓ Processed {dates_processed} dates, {dates_with_data} dates had valid data")
+            print(f"Processed {dates_processed} dates, {dates_with_data} dates had valid data")
             
         else:
             # Regular index - assume each row is an observation
@@ -675,7 +675,7 @@ class CountryFactorSelectionFramework:
                 if len(col_data) > 1:
                     print(f"  {col}: mean={col_data.mean():.3f}, std={col_data.std():.3f}")
         
-        print(f"✓ Created factor matrix: {final_data.shape[0]} observations × {final_data.shape[1]} factors")
+        print(f"Created factor matrix: {final_data.shape[0]} observations × {final_data.shape[1]} factors")
         
         # Store metadata
         self.results['data_info'] = {
@@ -766,7 +766,7 @@ class CountryFactorSelectionFramework:
                     })
         
         self.results['high_correlations'] = high_corr_pairs
-        print(f"✓ Found {len(high_corr_pairs)} highly correlated pairs (|r| >= {self.correlation_threshold})")
+        print(f"Found {len(high_corr_pairs)} highly correlated pairs (|r| >= {self.correlation_threshold})")
         
         return correlation_matrix
     
@@ -861,7 +861,7 @@ class CountryFactorSelectionFramework:
                 })
         
         self.results['clustering_analysis'] = cluster_analysis
-        print(f"✓ Clustering reduced {len(correlation_matrix.columns)} factors to {len(selected_factors)}")
+        print(f"Clustering reduced {len(correlation_matrix.columns)} factors to {len(selected_factors)}")
         
         return selected_factors
     
@@ -916,14 +916,14 @@ class CountryFactorSelectionFramework:
         try:
             from statsmodels.stats.outliers_influence import variance_inflation_factor
         except ImportError:
-            print("  ⚠️  statsmodels not available, skipping VIF analysis")
+            print("  statsmodels not available, skipping VIF analysis")
             return candidate_factors
         
         # Prepare clean data
         vif_data = factor_matrix[candidate_factors].dropna()
         
         if len(vif_data) < len(candidate_factors) * 5:
-            print("  ⚠️  Insufficient data for VIF analysis")
+            print("  Insufficient data for VIF analysis")
             return candidate_factors
         
         remaining_factors = candidate_factors.copy()
@@ -966,7 +966,7 @@ class CountryFactorSelectionFramework:
                 break
         
         self.results['vif_analysis'] = vif_results
-        print(f"✓ VIF analysis: {len(candidate_factors)} → {len(remaining_factors)} factors")
+        print(f"VIF analysis: {len(candidate_factors)} → {len(remaining_factors)} factors")
         
         return remaining_factors
     
@@ -1023,7 +1023,7 @@ class CountryFactorSelectionFramework:
             }
         
         self.results['category_balancing'] = balancing_info
-        print(f"✓ Category balancing: {len(selected_factors)} → {len(balanced_factors)} factors")
+        print(f"Category balancing: {len(selected_factors)} → {len(balanced_factors)} factors")
         
         return balanced_factors
     
@@ -1111,7 +1111,7 @@ class CountryFactorSelectionFramework:
                      (f" ... (+{len(corrections['inverted'])-5} more)" if len(corrections['inverted']) > 5 else ""))
             
             if corrections['unknown_factors']:
-                print(f"  ⚠️  Review needed: {', '.join(corrections['unknown_factors'])}")
+                print(f"  Review needed: {', '.join(corrections['unknown_factors'])}")
         
         # Data coverage info
         if 'data_info' in self.results:
@@ -1207,7 +1207,7 @@ class CountryFactorSelectionFramework:
         # Create standardized matrix using same process
         final_matrix = self.create_country_factor_matrix(selected_data)
         
-        print(f"✓ Final matrix shape: {final_matrix.shape}")
+        print(f"Final matrix shape: {final_matrix.shape}")
         return final_matrix
     
     def plot_correlation_heatmap(self, correlation_matrix: pd.DataFrame, 
@@ -1472,7 +1472,7 @@ def create_factor_analysis_report(results: Dict[str, Any],
        f.write("END OF REPORT\n")
        f.write("="*80 + "\n")
    
-   print(f"✓ Comprehensive report saved to: {output_file}")
+   print(f"Comprehensive report saved to: {output_file}")
 
 
 def export_selected_factors_data(dataFrames: Dict[str, pd.DataFrame], 
@@ -1506,9 +1506,9 @@ def export_selected_factors_data(dataFrames: Dict[str, pd.DataFrame],
                 output_path = os.path.join(output_folder, f"{factor}.xlsx")
                 dataFrames[factor].to_excel(output_path, index=True)
                 exported_count += 1
-                print(f"  ✓ Exported {factor}")
+                print(f"  Exported {factor}")
             except Exception as e:
-                print(f"  ✗ Failed to export {factor}: {e}")
+                print(f"  Failed to export {factor}: {e}")
     
     # Create summary file
     try:
@@ -1523,12 +1523,12 @@ def export_selected_factors_data(dataFrames: Dict[str, pd.DataFrame],
             for i, factor in enumerate(sorted(selected_factors), 1):
                 f.write(f"{i:2d}. {factor}\n")
         
-        print(f"  ✓ Summary saved to {summary_path}")
+        print(f"  Summary saved to {summary_path}")
     except Exception as e:
-        print(f"  ⚠️  Could not create summary file: {e}")
+        print(f"  Could not create summary file: {e}")
     
-    print(f"\n✓ Export completed: {exported_count}/{len(selected_factors)} factors")
-    print(f"✓ Files saved to: {output_folder}/")
+    print(f"\nExport completed: {exported_count}/{len(selected_factors)} factors")
+    print(f"Files saved to: {output_folder}/")
 
 
 # Advanced analysis functions for post-selection validation
@@ -1600,7 +1600,7 @@ def validate_factor_selection(factor_matrix: pd.DataFrame,
     }
     
     # Print validation summary
-    print(f"✓ Validation completed:")
+    print(f"Validation completed:")
     print(f"  - Final factor count: {validation_results['n_factors']}")
     print(f"  - Observations: {validation_results['n_observations']:,}")
     print(f"  - Remaining high correlations: {validation_results['high_correlations_remaining']}")
