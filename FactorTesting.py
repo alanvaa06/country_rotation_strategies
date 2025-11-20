@@ -27,11 +27,25 @@ selected_factors = [
     'RollingVol', 'CumFlow'
 ]
 
+selected_factors = [
+    'Debt', 'AssetsEquity', 'DvdYieldFWDSpread',
+    'EbitdaMargin', 'ROE', 'Equity', 'EV_EBIT',
+    'Net_Debt_Ebitda', 'Flows', 'Fwd_EV_EBITDA',
+    'CashFlowYieldFWDSpread', 'Fwd_PS', 'Fwd_ROE',
+     'M2', 'CF', 'Revenue', 'SI_Ratio', 'Ten_Year',
+    'ConsensusSalesGrowth', 'ConsensusEbitdaGrowth',
+    'ConsensusEarningsGrowth', 'ConsensusCashFlowGrowth',
+    'EarningsYieldFWDSpread', 'NetMargin', 'FwdRevenue',
+    'FwdEBITDAMargin', 'RollingEarnings', 'FwdRollingEarnings',
+    'RollingVol', 'CumFlow'
+]
 # ============================================================================
 # MARKET CONFIGURATION
 # ============================================================================
+#markets = ['World', 'DM', 'EM', 'Asia', 'Europe', 'LatAm']  # List of markets to test
 markets = ['World', 'DM', 'EM', 'Asia', 'Europe', 'LatAm']  # List of markets to test
 
+#%%
 # ============================================================================
 # LOAD AND PROCESS DATA (Once for all markets)
 # ============================================================================
@@ -55,6 +69,7 @@ print(f"  • Processed datasets: {len(processed_data)}")
 print(f"  • Markets to test: {len(markets)} - {markets}")
 print(f"  • Selected factors: {len(selected_factors)}")
 
+#%%
 # ============================================================================
 # FILTER FACTORS (Once for all markets)
 # ============================================================================
@@ -73,6 +88,7 @@ missing_factors = set(selected_factors) - set(filtered_factor_dfs.keys())
 if missing_factors:
     print(f"  ⚠ Warning: Missing factors: {missing_factors}")
 
+#%%
 # ============================================================================
 # SCENARIO DEFINITIONS
 # ============================================================================
@@ -150,6 +166,7 @@ print(f"  • Metric weight scenarios: {len(metric_weight_scenarios)}")
 print(f"  • Category weight scenarios: {len(category_weight_scenarios)}")
 print(f"  • Total combinations per market: {len(metric_weight_scenarios) * len(category_weight_scenarios)}")
 
+#%%
 # ============================================================================
 # INITIALIZE STORAGE FOR ALL MARKETS
 # ============================================================================
@@ -253,6 +270,7 @@ for market in markets:
     print(f"  • {market}: {len(all_normalized_scores[market])} scenarios, "
           f"{len(sample_df.columns)} countries, "
           f"{len(sample_df)} dates")
+
 
 # ============================================================================
 # EXPORT NORMALIZED SCORES TO EXCEL

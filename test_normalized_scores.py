@@ -98,14 +98,19 @@ def calculate_forward_returns(prices, periodicity):
     
     Returns[t] = (Price[t+period] - Price[t]) / Price[t]
     """
+
+    all_dates = prices.index
+    selected_dates = sorted(all_dates[::-periodicity])
+    
     try:
         # Ensure all data is numeric
         prices_numeric = prices.apply(pd.to_numeric, errors='coerce')
         
         # Calculate returns: (price[t+period] - price[t]) / price[t]
-        forward_returns = prices_numeric.shift(-periodicity) / prices_numeric - 1
-        
+        forward_returns = prices_numeric.loc[selected_dates].pct_change() 
+        forward_returns = forward_returns.iloc[1:]
         return forward_returns
+
     except Exception as e:
         print(f"\n✗ ERROR calculating forward returns:")
         print(f"  Periodicity: {periodicity}")
@@ -143,15 +148,19 @@ def calculate_signal(normalized_score, periodicity, method):
     pd.DataFrame
         Signal values
     """
+
+    all_dates = normalized_score.index
+    selected_dates = sorted(all_dates[::-periodicity])
+
     if method == 'absolute':
         # ABSOLUTE: Use current scores as signal
         # Signal[t] = Score[t]
-        return normalized_score
+        return normalized_score.loc[selected_dates]
     else:  # relative
         # RELATIVE: Use score changes over periodicity as signal
         # Signal[t] = Score[t] - Score[t-periodicity]
         # This tests if score momentum predicts returns
-        return normalized_score.diff(periodicity)
+        return normalized_score.loc[selected_dates].diff().iloc[1:]
 
 
 def calculate_ic_statistics(signal_df, forward_returns_df, periodicity):
@@ -391,6 +400,7 @@ def export_results(results_df, output_file='ic_analysis_results.csv'):
     print(f"\n✓ Results exported to: {output_file}")
 
 
+#%%
 def main():
     """Main execution function."""
     # Load data
@@ -437,3 +447,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+#%%
+
+#calculate_forward_returns(prices, 5)
+
+calculate_signal(normalized_score,5,'absolute')

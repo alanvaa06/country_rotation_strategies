@@ -32,7 +32,7 @@ from backtest import Backtest
 warnings.filterwarnings('ignore')
 plt.style.use('seaborn-v0_8')
 
-
+#%%
 # ============================================================================
 # STEP 1: DATA PROCESSING
 # ============================================================================
@@ -102,7 +102,7 @@ except Exception as e:
     print(f"\n⚠ ERROR loading normalized scores: {str(e)}")
     raise
 
-
+#%%
 # ============================================================================
 # STEP 3: PREPARE DATA FOR BACKTESTING
 # ============================================================================
