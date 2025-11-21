@@ -530,12 +530,40 @@ if __name__ == "__main__":
     # ========================================================================
     
     print("\n" + "=" * 80)
-    print("SYSTEMATIC TESTING: ALL SCORES & PARAMETERS")
+    print("SYSTEMATIC TESTING: FILTERED SCORES & PARAMETERS")
     print("=" * 80)
     
-    # Get all normalized score files
-    score_files = bt_tests.get_normalized_score_files() # returns all by default
-    print(f"\nFound {len(score_files)} score files.")
+    # Load IC Analysis Results to filter score files
+    ic_analysis_file = "ic_analysis_results.xlsx"
+    ic_threshold = 0.05
+    
+    print(f"\nLoading IC Analysis from: {ic_analysis_file}")
+    print(f"Filtering for Mean_IC > {ic_threshold}")
+    
+    try:
+        if os.path.exists(ic_analysis_file):
+            ic_df = pd.read_excel(ic_analysis_file)
+            
+            # Filter by Mean_IC
+            filtered_scores = ic_df[ic_df['Mean_IC'] > ic_threshold]
+            
+            # Get file names (ensure .xlsx extension)
+            score_files = filtered_scores['Score_Name'].tolist()
+            # Add extension if missing
+            score_files = [f if str(f).endswith('.xlsx') else f"{f}.xlsx" for f in score_files]
+            
+            print(f"Found {len(score_files)} score files meeting criteria (out of {len(ic_df)})")
+        else:
+            print(f"⚠ File not found: {ic_analysis_file}")
+            print("Falling back to all files in folder...")
+            score_files = bt_tests.get_normalized_score_files()
+
+    except Exception as e:
+        print(f"⚠ Error loading or filtering IC analysis file: {str(e)}")
+        print("Falling back to all files in folder...")
+        score_files = bt_tests.get_normalized_score_files()
+    
+    print(f"\nTotal files to process: {len(score_files)}")
     
     # Define parameter grids
     # Common parameters
@@ -573,7 +601,7 @@ if __name__ == "__main__":
     # Run tests across all score files
     # Using a prefix to identify these tests
     results = bt_tests.run_multi_score_tests(
-        score_files=score_files[:3],
+        score_files=score_files,
         param_grid=full_grid,
         test_prefix="SysTest"
     )
