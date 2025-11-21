@@ -2,6 +2,9 @@
 Backtest Module for Country Rotation Strategy
 
 This module contains the Backtest class for running backtests on country rotation strategies.
+
+Author: Alan Vazquez, CFA, Master Jedi
+Last Updated: November 2025
 """
 
 import pandas as pd
@@ -97,6 +100,8 @@ class Backtest:
         self.active_return = None
         self.dates = None
         self.date_tuples = None
+        self.daily_returns = None
+        self.daily_benchmark_returns = None
         
         # Initialize transaction tracking containers
         self.transaction_costs = None
@@ -247,6 +252,11 @@ class Backtest:
             trade_details_list
         )
         
+        # Step 5: Calculate Daily Returns
+        daily_port, daily_bmk = self.get_daily_returns()
+        self.daily_returns = daily_port
+        self.daily_benchmark_returns = daily_bmk
+
         return self.get_results()
     
     def _filter_dates(self):
@@ -807,6 +817,62 @@ class Backtest:
         # Store detailed trade information
         self.historical_trades = trade_details_list
     
+    def get_daily_returns(self):
+        """
+        Calculate daily portfolio returns by upsampling weights to daily frequency.
+        
+        Methodology:
+        1. Map the stored weights (indexed at period-end d_ret) back to their 
+           selection date (d_sel).
+        2. Forward fill (ffill) these weights to cover all days in the holding period.
+        3. Shift by 1 day so that weights determined at Close(t) apply to Returns(t+1).
+        """
+        if self.historical_weights is None:
+            raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
+
+        # 1. Calculate daily returns for the universe
+        daily_asset_returns = self.prices.pct_change()
+
+        # 2. Create a DataFrame for weights indexed by SELECTION date (d_sel)
+        # Currently self.historical_weights is indexed by d_ret (end of period)
+        
+        # Create mapping dictionaries
+        sel_dates = [t[0] for t in self.date_tuples]  # d_sel
+        ret_dates = [t[1] for t in self.date_tuples]  # d_ret
+        
+        # Initialize empty weights with daily index
+        daily_weights = pd.DataFrame(np.nan, index=daily_asset_returns.index, columns=self.historical_weights.columns)
+        
+        # Map weights to their start dates
+        for d_sel, d_ret in zip(sel_dates, ret_dates):
+            if d_ret in self.historical_weights.index:
+                # Place the weights at the start of the period
+                daily_weights.loc[d_sel] = self.historical_weights.loc[d_ret]
+
+        # 3. Forward fill weights
+        # This holds the position from d_sel until the next d_sel
+        daily_weights = daily_weights.ffill()
+        
+        # 4. Shift weights by 1 day
+        # Essential: Weights decided at Close of d_sel affect returns starting d_sel+1
+        daily_weights = daily_weights.shift(1)
+        
+        # 5. Filter to valid window (start from first selection date)
+        if not sel_dates:
+             return pd.Series(), pd.Series()
+             
+        start_date = sel_dates[0]
+        daily_weights = daily_weights.loc[start_date:]
+        daily_asset_returns = daily_asset_returns.loc[start_date:]
+        
+        # 6. Calculate Portfolio Return
+        daily_port_return = (daily_weights * daily_asset_returns).sum(axis=1)
+        
+        # 7. Calculate Benchmark Return
+        daily_bmk_return = daily_asset_returns[self.bmk] if self.bmk in daily_asset_returns.columns else pd.Series(0, index=daily_asset_returns.index)
+
+        return daily_port_return, daily_bmk_return
+
     def get_results(self):
         """
         Get all backtest results.
@@ -824,6 +890,8 @@ class Backtest:
             'returns_net': self.returns_net,
             'benchmark_returns': self.benchmark_returns,
             'active_return': self.active_return,
+            'daily_returns': self.daily_returns,
+            'daily_benchmark_returns': self.daily_benchmark_returns,
             'historical_countries': self.historical_countries,
             'historical_active_weights': self.historical_active_weights,
             'historical_weights': self.historical_weights,
@@ -835,11 +903,17 @@ class Backtest:
             'date_tuples': self.date_tuples
         }
     
-    def get_performance_summary(self):
+    def get_performance_summary(self, daily=True):
         """
         Calculate and return performance summary statistics.
         
         Uses geometric returns for annualization and adjusts for actual periodicity.
+        
+        Parameters
+        ----------
+        daily : bool, optional
+            If True, use daily returns for calculation (default True).
+            If False, use period-based returns (based on rebalancing frequency).
         
         Returns
         -------
@@ -849,17 +923,31 @@ class Backtest:
         if self.returns is None:
             raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
         
-        # Calculate number of days in sample
-        num_days = (self.returns.index[-1] - self.returns.index[0]).days
+        # Determine which returns to use
+        if daily and self.daily_returns is not None and not self.daily_returns.empty:
+            returns_to_use = self.daily_returns
+            bmk_returns_to_use = self.daily_benchmark_returns
+            periods_per_year = 252
+            # Align active returns
+            active_returns_to_use = returns_to_use - bmk_returns_to_use
+        else:
+            # Fallback to period returns if daily requested but not available, or if daily=False
+            if daily and (self.daily_returns is None or self.daily_returns.empty):
+                print("Warning: Daily returns not available. Using period returns instead.")
+            
+            returns_to_use = self.returns
+            bmk_returns_to_use = self.benchmark_returns
+            active_returns_to_use = self.active_return
+            # Calculate periods per year based on actual periodicity
+            periods_per_year = 252 / self.periodicity
         
-        # Calculate periods per year based on actual periodicity
-        # If rebalancing every 5 days, we have ~252/5 = ~50 periods per year
-        periods_per_year = 252 / self.periodicity
+        # Calculate number of days in sample
+        num_days = (returns_to_use.index[-1] - returns_to_use.index[0]).days
         
         # Calculate cumulative returns
-        cum_portfolio = (1 + self.returns).cumprod() - 1
-        cum_benchmark = (1 + self.benchmark_returns).cumprod() - 1
-        cum_active = cum_portfolio-cum_benchmark
+        cum_portfolio = (1 + returns_to_use).cumprod() - 1
+        cum_benchmark = (1 + bmk_returns_to_use).cumprod() - 1
+        cum_active = cum_portfolio - cum_benchmark
         
         # Helper function to calculate annualized return (geometric)
         def calc_annualized_return(returns_series, days):
@@ -931,21 +1019,22 @@ class Backtest:
             return up_capture, down_capture
         
         # Calculate metrics for Portfolio
-        port_ann_return = calc_annualized_return(self.returns, num_days)
-        port_ann_vol = calc_annualized_vol(self.returns, periods_per_year)
+        port_ann_return = calc_annualized_return(returns_to_use, num_days)
+        port_ann_vol = calc_annualized_vol(returns_to_use, periods_per_year)
         port_sharpe = calc_sharpe(port_ann_return, port_ann_vol)
-        port_beta = calc_beta(self.returns, self.benchmark_returns)
-        port_up_capture, port_down_capture = calc_capture_ratios(self.returns, self.benchmark_returns)
+        port_beta = calc_beta(returns_to_use, bmk_returns_to_use)
+        port_up_capture, port_down_capture = calc_capture_ratios(returns_to_use, bmk_returns_to_use)
         
         # Calculate metrics for Benchmark
-        bmk_ann_return = calc_annualized_return(self.benchmark_returns, num_days)
-        bmk_ann_vol = calc_annualized_vol(self.benchmark_returns, periods_per_year)
+        bmk_ann_return = calc_annualized_return(bmk_returns_to_use, num_days)
+        bmk_ann_vol = calc_annualized_vol(bmk_returns_to_use, periods_per_year)
         bmk_sharpe = calc_sharpe(bmk_ann_return, bmk_ann_vol)
         
         # Calculate metrics for Active
-        active_ann_return = port_ann_return-bmk_ann_return
-        tracking_error = calc_tracking_error(self.active_return, periods_per_year)
-        active_info_ratio = calc_sharpe(active_ann_return, tracking_error)  # Information ratio = Active Return / Active Vol
+        active_ann_return = port_ann_return - bmk_ann_return
+        tracking_error = calc_tracking_error(active_returns_to_use, periods_per_year)
+        active_info_ratio = calc_sharpe(active_ann_return, tracking_error)
+        
         # Build statistics dictionary
         stats = {
             'Portfolio': {
@@ -953,8 +1042,8 @@ class Backtest:
                 'Annualized Return': port_ann_return,
                 'Annualized Volatility': port_ann_vol,
                 'Sharpe Ratio': port_sharpe,
-                'Max Drawdown': self._calculate_max_drawdown(self.returns),
-                'Win Rate': (self.returns > 0).sum() / len(self.returns) if len(self.returns) > 0 else np.nan,
+                'Max Drawdown': self._calculate_max_drawdown(returns_to_use),
+                'Win Rate': (returns_to_use > 0).sum() / len(returns_to_use) if len(returns_to_use) > 0 else np.nan,
                 'Beta': port_beta,
                 'Up Capture': port_up_capture,
                 'Down Capture': port_down_capture,
@@ -965,9 +1054,9 @@ class Backtest:
                 'Annualized Return': bmk_ann_return,
                 'Annualized Volatility': bmk_ann_vol,
                 'Sharpe Ratio': bmk_sharpe,
-                'Max Drawdown': self._calculate_max_drawdown(self.benchmark_returns),
-                'Win Rate': (self.benchmark_returns > 0).sum() / len(self.benchmark_returns) if len(self.benchmark_returns) > 0 else np.nan,
-                'Beta': np.nan,  # Benchmark beta to itself would be 1, but NA makes more sense
+                'Max Drawdown': self._calculate_max_drawdown(bmk_returns_to_use),
+                'Win Rate': (bmk_returns_to_use > 0).sum() / len(bmk_returns_to_use) if len(bmk_returns_to_use) > 0 else np.nan,
+                'Beta': np.nan,
                 'Up Capture': np.nan,
                 'Down Capture': np.nan,
                 'Tracking Error': np.nan
@@ -976,10 +1065,10 @@ class Backtest:
                 'Total Return': cum_active.iloc[-1] if len(cum_active) > 0 else np.nan,
                 'Annualized Return': active_ann_return,
                 'Annualized Volatility': tracking_error,
-                'Sharpe Ratio': np.nan,  # Sharpe not applicable for active returns
-                'Max Drawdown': self._calculate_max_drawdown(self.active_return),
-                'Win Rate': (self.active_return > 0).sum() / len(self.active_return) if len(self.active_return) > 0 else np.nan,
-                'Beta': np.nan,  # Beta not applicable for active returns
+                'Sharpe Ratio': np.nan,
+                'Max Drawdown': self._calculate_max_drawdown(active_returns_to_use),
+                'Win Rate': (active_returns_to_use > 0).sum() / len(active_returns_to_use) if len(active_returns_to_use) > 0 else np.nan,
+                'Beta': np.nan,
                 'Up Capture': np.nan,
                 'Down Capture': np.nan,
                 'Tracking Error': tracking_error,
@@ -1805,9 +1894,19 @@ class Backtest:
         if self.returns is None:
             raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
         
-        cum_portfolio = (1 + self.returns).cumprod()
-        cum_benchmark = (1 + self.benchmark_returns).cumprod()
-        cum_active = (1 + self.active_return).cumprod()
+        # Use daily returns if available for smoother plots
+        if self.daily_returns is not None and not self.daily_returns.empty:
+            returns_to_use = self.daily_returns
+            bmk_returns_to_use = self.daily_benchmark_returns
+            active_returns_to_use = returns_to_use - bmk_returns_to_use
+        else:
+            returns_to_use = self.returns
+            bmk_returns_to_use = self.benchmark_returns
+            active_returns_to_use = self.active_return
+        
+        cum_portfolio = (1 + returns_to_use).cumprod()
+        cum_benchmark = (1 + bmk_returns_to_use).cumprod()
+        cum_active = cum_portfolio - cum_benchmark
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
         
@@ -1822,7 +1921,7 @@ class Backtest:
         
         # Plot 2: Active Return
         ax2.plot(cum_active.index, cum_active.values, label='Active Return', color='green', linewidth=2)
-        ax2.axhline(y=1, color='black', linestyle='--', alpha=0.5)
+        ax2.axhline(y=0, color='black', linestyle='--', alpha=0.5)
         ax2.set_title('Cumulative Active Returns', fontsize=14, fontweight='bold')
         ax2.set_xlabel('Date')
         ax2.set_ylabel('Cumulative Active Return')
@@ -1832,48 +1931,107 @@ class Backtest:
         plt.tight_layout()
         plt.show()
     
-    def plot_weights_over_time(self, top_n=10):
+    def plot_weights_over_time(self, top_n=None):
         """
-        Plot portfolio weights over time for top N most frequently selected countries.
+        Plot portfolio weights over time as a stacked area chart.
         
         Parameters
         ----------
         top_n : int, optional
-            Number of top countries to display (default 10)
+            Number of top countries to display individually. Others will be grouped into 'Other'.
+            If None (default), all countries are shown (can be messy if many countries).
         """
         if self.historical_weights is None:
             raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
         
-        # Get top N countries by average weight (excluding benchmark)
-        avg_weights = self.historical_weights.drop(columns=[self.bmk], errors='ignore').mean()
-        top_countries = avg_weights.nlargest(top_n).index.tolist()
+        # 1. Get Weights Data
+        # We want to show the evolution, so we should ideally use daily weights if available 
+        # for a smoother chart, or period weights if not. 
+        # To be consistent with the 'holdings' view, let's use the period weights (historical_weights)
+        # but forward filled to show the holding periods clearly, OR just plot the rebalancing points.
+        # A stacked area chart looks best with a continuous index.
         
-        # Plot
+        # Let's reconstruct the daily weights logic locally to get a smooth area chart
+        daily_weights = self.historical_weights.reindex(self.daily_returns.index, method='ffill') if self.daily_returns is not None else self.historical_weights
+        
+        # Fill NaNs with 0
+        daily_weights = daily_weights.fillna(0)
+
+        # 2. Handle "Other" grouping if top_n is specified
+        plot_data = daily_weights.copy()
+        
+        if top_n is not None and len(plot_data.columns) > top_n:
+            # Calculate average weight for ranking
+            avg_weights = plot_data.mean()
+            
+            # Keep Benchmark separate if it exists
+            if self.bmk in plot_data.columns:
+                avg_weights_no_bmk = avg_weights.drop(self.bmk)
+                top_countries = avg_weights_no_bmk.nlargest(top_n).index.tolist()
+                countries_to_keep = top_countries + [self.bmk]
+            else:
+                top_countries = avg_weights.nlargest(top_n).index.tolist()
+                countries_to_keep = top_countries
+            
+            # Group others
+            others_mask = ~plot_data.columns.isin(countries_to_keep)
+            if others_mask.any():
+                plot_data['Other'] = plot_data.loc[:, others_mask].sum(axis=1)
+                plot_data = plot_data.loc[:, countries_to_keep + ['Other']]
+        
+        # 3. Plot Stacked Area Chart
+        # Use 'tab20' colormap for distinct colors
+        import matplotlib.cm as cm
+        
         fig, ax = plt.subplots(figsize=(14, 8))
         
-        # Plot benchmark
-        if self.bmk in self.historical_weights.columns:
-            ax.plot(self.historical_weights.index, 
-                   self.historical_weights[self.bmk], 
-                   label=self.bmk, 
-                   linewidth=2, 
-                   linestyle='--', 
-                   color='black', 
-                   alpha=0.7)
+        # Create the stackplot
+        # Sort columns: Put 'Other' at the bottom, then smallest to largest, or largest to smallest.
+        # A good heuristic: Benchmark at bottom (if present), then Other, then largest countries.
+        avg_w = plot_data.mean()
         
-        # Plot top countries
-        for country in top_countries:
-            ax.plot(self.historical_weights.index, 
-                   self.historical_weights[country], 
-                   label=country, 
-                   alpha=0.7)
+        # Custom sort order
+        sorted_cols = avg_w.sort_values(ascending=True).index.tolist()
         
-        ax.set_title(f'Portfolio Weights Over Time (Top {top_n} Countries + Benchmark)', 
-                    fontsize=14, fontweight='bold')
+        # Ensure 'Other' is at the bottom if it exists
+        if 'Other' in sorted_cols:
+            sorted_cols.remove('Other')
+            sorted_cols.insert(0, 'Other')
+            
+        # Ensure Benchmark is at the very bottom if it exists (foundation)
+        if self.bmk in sorted_cols:
+            sorted_cols.remove(self.bmk)
+            sorted_cols.insert(0, self.bmk)
+            
+        plot_data = plot_data[sorted_cols]
+        
+        # Generate colors
+        # We use tab20, but if we have more than 20, we cycle or interpolate
+        n_cols = len(plot_data.columns)
+        if n_cols <= 20:
+            colors = cm.tab20.colors[:n_cols]
+        else:
+            # Interpolate if more than 20 needed (rare with top_n=10)
+            colors = [cm.tab20(i) for i in np.linspace(0, 1, n_cols)]
+            
+        # Draw Stackplot
+        stacks = ax.stackplot(plot_data.index, plot_data.T, labels=plot_data.columns, colors=colors, alpha=0.85)
+        
+        ax.set_title('Portfolio Weights Evolution (Stacked Area)', fontsize=14, fontweight='bold')
         ax.set_xlabel('Date')
         ax.set_ylabel('Weight')
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.set_ylim(0, 1.0)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
         ax.grid(True, alpha=0.3)
         
-        plt.tight_layout()
+        # --- FIX LEGEND OVERLAP ---
+        # Shrink the axis width by 15% to make room for the legend on the right
+        box = ax.get_position()
+        ax.set_position([box.x0, box.y0, box.width * 0.85, box.height])
+        
+        # Place legend in the reserved space
+        # Reverse legend order to match stack order (visual intuition)
+        handles, labels = ax.get_legend_handles_labels()
+        ax.legend(handles[::-1], labels[::-1], loc='center left', bbox_to_anchor=(1.02, 0.5), fontsize='small', borderaxespad=0.)
+        
         plt.show()

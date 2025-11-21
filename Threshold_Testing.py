@@ -6,6 +6,9 @@ and analyze their impact on the final composite score's rank correlation.
 
 The module can be run independently from strategy.py to test various threshold values
 and visualize the relationship between threshold, number of factors, and correlation.
+
+Author: Alan Vazquez, CFA, Master Jedi
+Last Updated: November 2025
 """
 
 import os

@@ -3,6 +3,9 @@ FactorTransformer Module
 
 This module contains the FactorTransformer class for transforming factor data
 into standardized metrics for quantitative country rotation strategies.
+
+Author: Alan Vazquez, CFA, Master Jedi
+Last Updated: November 2025
 """
 
 import pandas as pd

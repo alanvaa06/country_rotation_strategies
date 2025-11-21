@@ -5,6 +5,9 @@ This module provides a ProcessData class for loading, processing, and exporting
 financial data for the country rotation strategy.
 
 The class consolidates all data loading and processing functionality from the Inputs folder.
+
+Author: Alan Vazquez, CFA, Master Jedi
+Last Updated: November 2025
 """
 
 import os

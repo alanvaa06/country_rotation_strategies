@@ -6,6 +6,9 @@ It processes multiple datasets, performs regional aggregations, calculates deriv
 and exports the results for further analysis.
 
 All functions are imported from function_module.py for better code organization.
+
+Author: Alan Vazquez, CFA, Master Jedi
+Last Updated: November 2025
 """
 
 import os

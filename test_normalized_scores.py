@@ -3,6 +3,9 @@ IC Analysis for Normalized Scores
 
 Calculates Information Coefficient statistics for different normalized score methods
 across multiple periodicities and methodologies (Absolute vs Relative).
+
+Author: Alan Vazquez, CFA, Master Jedi
+Last Updated: November 2025
 """
 
 import pandas as pd

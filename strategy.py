@@ -7,7 +7,7 @@ This script implements a streamlined backtesting workflow:
     3. Backtesting - Run strategy backtests with various configurations
     4. Performance Analysis - Compare results across strategies
 
-Author: Investment Strategy Team
+Author: Alan Vazquez, CFA, Master Jedi
 Last Updated: November 2025
 """
 
@@ -47,7 +47,7 @@ backtest = Backtest(
     weighting_method="Equal",
     relative_selection_score=5,
     bmk='World',
-    bmk_weight=0.0,
+    bmk_weight=0.50,
     periodicity=PERIODICITY,
     transaction_cost_bps=TRANSACTION_COST_BPS
 )
@@ -55,9 +55,26 @@ backtest = Backtest(
 results_1 = backtest.run_backtest()
 summary_1 = backtest.get_performance_summary()
 #%%
-IC=backtest.IC_analysis(plot=True)
-#%%
-IC['statistics']['num_periods']
-#%%
+# Print Performance Summary
+print("\nPerformance Summary:")
+print(summary_1)
 
-summary_1
+# 1. Plot Cumulative Returns
+print("\nPlotting Cumulative Returns...")
+backtest.plot_cumulative_returns()
+
+# 2. Portfolio Turnover Analysis
+print("\nGenerating Turnover Analysis...")
+backtest.portfolio_turnover_analysis(plot=True)
+
+# 3. Performance Attribution Analysis
+print("\nGenerating Attribution Analysis...")
+backtest.performance_attribution_analysis(plot=True)
+
+# 4. Plot Portfolio Weights Over Time
+print("\nPlotting Portfolio Weights...")
+backtest.plot_weights_over_time(top_n=10)
+
+# 5. IC Analysis
+print("\nRunning IC Analysis...")
+backtest.IC_analysis(plot=True)

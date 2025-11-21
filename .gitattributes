@@ -1,2 +1,29 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Treat Excel files as binary
+*.xlsx binary
+*.xls binary
+*.xlsm binary
+
+# Treat Python compiled files as binary
+*.pyc binary
+*.pyo binary
+*.pyd binary
+
+# Treat compressed files as binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.7z binary
+
+# Treat images as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg text
+
+# Ignore local configuration or temporary files
+.DS_Store export-ignore
+Thumbs.db export-ignore

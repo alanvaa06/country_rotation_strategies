@@ -3,6 +3,9 @@ FactorTesting Module
 
 This module tests different factor combinations and weighting schemes for country rotation strategies.
 It uses FactorTransformer to compute normalized scores with various configurations.
+
+Author: Alan Vazquez, CFA, Master Jedi
+Last Updated: November 2025
 """
 
 import os

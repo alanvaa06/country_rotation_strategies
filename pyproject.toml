@@ -7,7 +7,7 @@ name = "country-rotation-strategy"
 version = "1.0.0"
 description = "Quantitative country rotation strategy using financial and economic data"
 authors = [
-    {name = "Alan Vazquez", email = "your.email@example.com"}
+    {name = "Alan Vazquez, CFA, Master Jedi"}
 ]
 readme = "README.md"
 license = {text = "MIT"}
@@ -77,31 +77,18 @@ analysis = [
     "arch>=5.0.0",          # Financial econometrics
     "pyfolio>=0.9.0",       # Portfolio analysis
     "empyrical>=0.5.0",     # Financial metrics
-    "quantlib>=1.29",       # Quantitative finance library
-]
-
-performance = [
-    # Performance optimization
-    "numba>=0.56.0",        # JIT compilation
-    "cython>=0.29.0",       # C extensions
-    "joblib>=1.2.0",        # Parallel computing
-    "dask>=2022.0.0",       # Parallel arrays and dataframes
 ]
 
 data = [
     # Additional data sources
     "yfinance>=0.2.0",      # Yahoo Finance data
-    "quandl>=3.7.0",        # Quandl financial data
-    "alpha-vantage>=2.3.0", # Alpha Vantage API
     "fredapi>=0.5.0",       # FRED economic data
-    "bloomberg>=1.0.0",     # Bloomberg API (if available)
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/country-rotation-strategy"
-Documentation = "https://github.com/yourusername/country-rotation-strategy/wiki"
-Repository = "https://github.com/yourusername/country-rotation-strategy.git"
-"Bug Tracker" = "https://github.com/yourusername/country-rotation-strategy/issues"
+# Homepage = "https://github.com/yourusername/country-rotation-strategy"
+# Documentation = "https://github.com/yourusername/country-rotation-strategy/wiki"
+# Repository = "https://github.com/yourusername/country-rotation-strategy.git"
 
 [project.scripts]
 country-rotation = "strategy:main"
@@ -139,14 +126,14 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 100
-known_first_party = ["strategy", "function_module"]
+known_first_party = ["strategy", "backtest", "ProcessData", "FactorTransformer"]
 
 # MyPy type checking
 [tool.mypy]
 python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
+disallow_untyped_defs = false
 ignore_missing_imports = true
 
 # Pytest configuration
@@ -185,21 +172,3 @@ exclude_lines = [
     "class .*\\(Protocol\\):",
     "@(abc\\.)?abstractmethod",
 ]
-
-# Anaconda/Conda environment configuration
-[tool.conda-lock]
-channels = [
-    "conda-forge",
-    "defaults",
-]
-
-[tool.conda-lock.dependencies]
-python = ">=3.8,<3.12"
-pandas = ">=1.5.0"
-numpy = ">=1.21.0"
-scipy = ">=1.9.0"
-matplotlib = ">=3.5.0"
-seaborn = ">=0.11.0"
-scikit-learn = ">=1.1.0"
-statsmodels = ">=0.13.0"
-openpyxl = ">=3.0.0"

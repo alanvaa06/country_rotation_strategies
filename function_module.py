@@ -3,6 +3,9 @@ Function Module for Country Rotation Strategy
 
 This module contains all the utility functions for processing financial data,
 regional classifications, and data transformations used in the country rotation strategy.
+
+Author: Alan Vazquez, CFA, Master Jedi
+Last Updated: November 2025
 """
 
 import os
