@@ -13,7 +13,7 @@ from scipy.stats import spearmanr
 import warnings
 warnings.filterwarnings('ignore')
 
-
+#%%
 def load_data():
     """Load prices and normalized scores."""
     print("Loading data...")
@@ -92,11 +92,31 @@ def load_data():
     return prices, normalized_scores_dict
 
 
-def calculate_forward_returns(prices, periodicity):
+def calculate_period_returns(prices, periodicity):
     """
-    Calculate forward returns for given periodicity.
+    Calculate returns between consecutive rebalancing dates.
     
-    Returns[t] = (Price[t+period] - Price[t]) / Price[t]
+    Samples prices at fixed intervals (every 'periodicity' days) and calculates
+    the return between consecutive rebalancing dates:
+    
+        Returns[t1] = (Price[t1] - Price[t0]) / Price[t0]
+    
+    where t0 and t1 are consecutive selected dates.
+    
+    Note: The "forward" relationship (signal → return) is established in the 
+    IC calculation where signal[t0] is paired with return[t0→t1].
+    
+    Parameters
+    ----------
+    prices : pd.DataFrame
+        Price data with datetime index
+    periodicity : int
+        Interval between rebalancing dates (in days)
+        
+    Returns
+    -------
+    pd.DataFrame
+        Period returns between consecutive rebalancing dates
     """
 
     all_dates = prices.index
@@ -106,13 +126,13 @@ def calculate_forward_returns(prices, periodicity):
         # Ensure all data is numeric
         prices_numeric = prices.apply(pd.to_numeric, errors='coerce')
         
-        # Calculate returns: (price[t+period] - price[t]) / price[t]
-        forward_returns = prices_numeric.loc[selected_dates].pct_change() 
-        forward_returns = forward_returns.iloc[1:]
-        return forward_returns
+        # Calculate returns between consecutive rebalancing dates
+        period_returns = prices_numeric.loc[selected_dates].pct_change() 
+        period_returns = period_returns.iloc[1:]
+        return period_returns
 
     except Exception as e:
-        print(f"\n✗ ERROR calculating forward returns:")
+        print(f"\n✗ ERROR calculating period returns:")
         print(f"  Periodicity: {periodicity}")
         print(f"  Prices shape: {prices.shape}")
         print(f"  Prices dtypes:\n{prices.dtypes}")
@@ -121,32 +141,36 @@ def calculate_forward_returns(prices, periodicity):
 
 def calculate_signal(normalized_score, periodicity, method):
     """
-    Calculate signal based on method.
+    Calculate signal at rebalancing dates based on method.
     
-    For ABSOLUTE method:
-        Signal = current normalized score
-        Tests if high scores predict high forward returns
+    Samples dates at fixed intervals (every 'periodicity' days) and calculates
+    signals that will be tested for predictive power.
+    
+    ABSOLUTE METHOD:
+        Signal[t] = Score[t]
+        Uses the score level at each rebalancing date
+        Tests if high scores predict high subsequent returns
         
-    For RELATIVE method:
-        Signal = score change over periodicity
-        Tests if score improvements predict high forward returns
-        Example: periodicity=21 → signal = score[t] - score[t-21]
+    RELATIVE METHOD:
+        Signal[t] = Score[t] - Score[t-period]
+        Uses the score change between consecutive rebalancing dates
+        Tests if score momentum predicts high subsequent returns
     
     Parameters
     ----------
     normalized_score : pd.DataFrame
-        Normalized scores
+        Normalized scores with datetime index
     periodicity : int
-        Period for signal calculation
-        - For absolute: not used (current scores)
-        - For relative: lookback period for score change
+        Interval between rebalancing dates (in days)
+        - For absolute: defines sampling frequency
+        - For relative: defines both sampling and differencing period
     method : str
         'absolute' or 'relative'
     
     Returns
     -------
     pd.DataFrame
-        Signal values
+        Signal values at rebalancing dates
     """
 
     all_dates = normalized_score.index
@@ -163,41 +187,52 @@ def calculate_signal(normalized_score, periodicity, method):
         return normalized_score.loc[selected_dates].diff().iloc[1:]
 
 
-def calculate_ic_statistics(signal_df, forward_returns_df, periodicity):
+def calculate_ic_statistics(signal_df, period_returns_df, periodicity):
     """
-    Calculate IC statistics between signal and forward returns.
+    Calculate IC statistics between signal and period returns.
+    
+    This function establishes the forward-looking predictive relationship by pairing:
+        - Signal at period start (t0) 
+        - Return during the period (t0 → t1)
+    
+    The IC measures: Correlation(Signal[t0], Return[t0→t1])
+    
+    This tests whether the signal at the start of a period predicts returns 
+    during that period, which is the correct approach for a rebalancing strategy.
     
     Parameters
     ----------
     signal_df : pd.DataFrame
-        Signal values (scores or score changes)
-    forward_returns_df : pd.DataFrame
-        Forward returns
+        Signal values at rebalancing dates (scores or score changes)
+    period_returns_df : pd.DataFrame
+        Period returns between consecutive rebalancing dates
     periodicity : int
-        Period used
+        Period interval (for reference)
         
     Returns
     -------
     dict
-        IC statistics
+        IC statistics including mean_ic, median_ic, std_ic, ic_t_stat, 
+        icir, hit_rate, and num_periods
     """
     ic_values = []
     
-    # Align dates
-    common_dates = signal_df.index.intersection(forward_returns_df.index)
+    # Align dates and create (start, end) pairs for each period
+    common_dates = signal_df.index.intersection(period_returns_df.index)
+    dates=[(common_dates[i], common_dates[i+1]) for i in range(len(common_dates)-1)]
     
-    for date in common_dates:
-        # Get signal and forward returns at this date
-        signal = signal_df.loc[date]
-        fwd_returns = forward_returns_df.loc[date]
+    for date in dates:
+        # Get signal at period start and return at period end (which represents t0→t1 return)
+        signal = signal_df.loc[date[0]]
+        period_returns = period_returns_df.loc[date[1]]
         
         # Get common countries (both have data)
-        common_countries = signal.dropna().index.intersection(fwd_returns.dropna().index)
+        common_countries = signal.dropna().index.intersection(period_returns.dropna().index)
         
         if len(common_countries) >= 3:  # Need at least 3 points
             signal_values = signal[common_countries].values
-            return_values = fwd_returns[common_countries].values
-            
+            return_values = period_returns[common_countries].values
+                
             # Calculate Spearman rank correlation
             ic, p_value = spearmanr(signal_values, return_values)
             ic_values.append(ic)
@@ -228,7 +263,7 @@ def calculate_ic_statistics(signal_df, forward_returns_df, periodicity):
     icir = mean_ic / std_ic if std_ic != 0 else 0
     
     # Hit rate
-    hit_rate = (ic_series > 0).sum() / len(ic_series)
+    hit_rate = (ic_series > 0).sum() / len(ic_series)  if len(ic_series) > 0 else 0
     
     return {
         'mean_ic': mean_ic,
@@ -244,35 +279,39 @@ def calculate_ic_statistics(signal_df, forward_returns_df, periodicity):
 def run_ic_analysis(prices, normalized_scores_dict, periodicities=[5, 10, 21, 63], 
                     methods=['absolute', 'relative']):
     """
-    Run IC analysis for all combinations.
+    Run IC analysis for all combinations of score × periodicity × method.
     
-    For each combination of score × periodicity × method, calculates:
+    For each combination:
+    1. Samples dates at fixed intervals (every 'periodicity' days)
+    2. Calculates period returns between consecutive rebalancing dates
+    3. Calculates signals at rebalancing dates
+    4. Computes IC: Correlation(Signal[t0], Return[t0→t1])
     
     ABSOLUTE METHOD:
-        Signal: Current normalized score
-        Forward Returns: Price returns over periodicity
-        IC: Correlation(Score[t], Return[t to t+period])
+        Signal[t0]: Normalized score at period start
+        Return[t0→t1]: Price return during period
+        IC: Tests if high scores predict high subsequent returns
         
     RELATIVE METHOD:  
-        Signal: Score change over periodicity (Score[t] - Score[t-period])
-        Forward Returns: Price returns over periodicity
-        IC: Correlation(Score_Change[t-period to t], Return[t to t+period])
+        Signal[t0]: Score change (Score[t0] - Score[t0-period])
+        Return[t0→t1]: Price return during period
+        IC: Tests if score momentum predicts high subsequent returns
     
     Parameters
     ----------
     prices : pd.DataFrame
-        Price data
+        Price data with datetime index
     normalized_scores_dict : dict
         Dictionary of normalized score DataFrames
     periodicities : list
-        List of periodicities to test (default [5, 10, 21, 63])
+        List of rebalancing intervals to test (default [5, 10, 21, 63])
     methods : list
         List of methods to test ('absolute', 'relative')
         
     Returns
     -------
     pd.DataFrame
-        Results DataFrame with IC statistics
+        Results DataFrame with IC statistics for all combinations
     """
     results = []
     
@@ -284,26 +323,26 @@ def run_ic_analysis(prices, normalized_scores_dict, periodicities=[5, 10, 21, 63
     print(f"  - {len(periodicities)} periodicities: {periodicities}")
     print(f"  - {len(methods)} methods: {methods}")
     print("\nTest Matrix:")
-    print("  Method    | Periodicity | Signal Definition              | Forward Returns")
+    print("  Method    | Periodicity | Signal Definition              | Period Returns")
     print("  " + "-" * 75)
     for method in methods:
         for period in periodicities:
             if method == 'absolute':
                 signal_def = f"Score[t]"
-                fwd_ret = f"Return[t → t+{period}]"
+                period_ret = f"Return[t → t+{period}]"
             else:
                 signal_def = f"Score[t] - Score[t-{period}]"
-                fwd_ret = f"Return[t → t+{period}]"
-            print(f"  {method:<9} | {period:>11} | {signal_def:<30} | {fwd_ret}")
+                period_ret = f"Return[t → t+{period}]"
+            print(f"  {method:<9} | {period:>11} | {signal_def:<30} | {period_ret}")
     print("=" * 80)
     
     for score_name, normalized_score in normalized_scores_dict.items():
         for periodicity in periodicities:
             try:
-                # Calculate forward returns
-                forward_returns = calculate_forward_returns(prices, periodicity)
+                # Calculate period returns between rebalancing dates
+                period_returns = calculate_period_returns(prices, periodicity)
             except Exception as e:
-                print(f"\n✗ ERROR calculating forward returns for periodicity {periodicity}")
+                print(f"\n✗ ERROR calculating period returns for periodicity {periodicity}")
                 print(f"   {str(e)}")
                 continue
             
@@ -315,7 +354,7 @@ def run_ic_analysis(prices, normalized_scores_dict, periodicities=[5, 10, 21, 63
                     signal = calculate_signal(normalized_score, periodicity, method)
                     
                     # Calculate IC statistics
-                    ic_stats = calculate_ic_statistics(signal, forward_returns, periodicity)
+                    ic_stats = calculate_ic_statistics(signal, period_returns, periodicity)
                     
                     # Store results
                     results.append({
@@ -377,8 +416,8 @@ def print_results_summary(results_df):
     print("=" * 80)
     for period in sorted(results_df['Periodicity'].unique()):
         print(f"\nPeriodicity = {period} days:")
-        print(f"  (Absolute: score → {period}-day forward return)")
-        print(f"  (Relative: {period}-day score change → {period}-day forward return)")
+        print(f"  (Absolute: score[t] → return[t→t+{period}])")
+        print(f"  (Relative: score change[t-{period}→t] → return[t→t+{period}])")
         subset = results_df[results_df['Periodicity'] == period].nlargest(5, 'Mean_IC')
         for _, row in subset.iterrows():
             print(f"  {row['Score_Name'][:60]:<60} | {row['Method']:<8} | IC: {row['Mean_IC']:>7.4f} | t: {row['IC_t_stat']:>6.2f}")
@@ -450,6 +489,13 @@ if __name__ == "__main__":
 
 #%%
 
-#calculate_forward_returns(prices, 5)
+prices=pd.read_excel('ProcessedInputs/Price.xlsx', index_col=0,parse_dates=True)
+normalized_score=pd.read_excel('Normalized_Scores/NormalizedScores_World_Scenario_3_Relative_Focus_Scenario_A_Balanced.xlsx', index_col=0,parse_dates=True)
+#%%
+period_returns_df=calculate_period_returns(prices, 63)
 
-calculate_signal(normalized_score,5,'absolute')
+signal_df=calculate_signal(normalized_score,63,'relative')
+#%%
+results=calculate_ic_statistics(signal_df, period_returns_df, periodicity=63)
+#%%
+signal_df.shape

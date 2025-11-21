@@ -151,23 +151,12 @@ class Backtest:
         dict
             Dictionary containing all backtest results
         """
-        print("=" * 60)
-        print("RUNNING BACKTEST")
-        print("=" * 60)
-        print(f"Selection Criteria: {self.selection_criteria.upper()}")
-        print(f"Periodicity: {self.periodicity} days")
-        print(f"Benchmark Weight: {self.bmk_weight:.1%}")
-        print(f"Active Weight: {1 - self.bmk_weight:.1%}")
-        print(f"Transaction Cost: {self.transaction_cost_bps * 10000:.1f} bps")
-        
         # Step 1: Filter dates by periodicity
         self.dates = self._filter_dates()
         
         # Step 2: Generate date tuples (selection_date, return_date)
         self.date_tuples = [(self.dates[i-1], self.dates[i]) 
                             for i in range(1, len(self.dates))]
-        
-        print(f"\nTotal Rebalancing Periods: {len(self.date_tuples)}")
         
         # Initialize storage lists
         portfolio_returns_list = []
@@ -240,10 +229,6 @@ class Backtest:
             
             # Update previous weights for next iteration
             previous_weights = blended_weights.copy()
-            
-            # Print progress every 50 periods
-            if (idx + 1) % 50 == 0:
-                print(f"Processed {idx + 1}/{len(self.date_tuples)} periods...")
         
         # Step 4: Convert results to DataFrames and Series
         self._store_results(
@@ -262,33 +247,27 @@ class Backtest:
             trade_details_list
         )
         
-        print(f"\nBacktest completed successfully!")
-        print(f"   Total Periods: {len(self.returns)}")
-        print(f"   Average Gross Return: {self.returns.mean():.4%}")
-        print(f"   Average Net Return: {self.returns_net.mean():.4%}")
-        print(f"   Average Transaction Cost: {self.transaction_costs.mean():.4%}")
-        print(f"   Average Turnover: {self.turnover.mean():.2%}")
-        print(f"   Average Active Return: {self.active_return.mean():.4%}")
-        
         return self.get_results()
     
     def _filter_dates(self):
         """
-        Filter dates from normalized_score using periodicity.
+        Filter dates using periodicity, anchored to normalized scores history.
         
         Returns
         -------
         list
             Sorted list of dates at specified periodicity intervals
         """
-        # Get all dates from normalized_score
-        all_dates = sorted(self.normalized_score.index)
+        # 1. Define master grid from Normalized Scores (anchored at end)
+        # User preference: Use normalized_score index for date determination
+        all_score_dates = self.normalized_score.index
+        grid_dates = sorted(all_score_dates[::-self.periodicity])
         
-        # Filter by periodicity: take every nth date starting from the end
-        # Logic: sorted(normalized_score.index[::-period])
-        filtered_dates = sorted(all_dates[::-self.periodicity])
+        # 2. Filter for price availability
+        # We can only trade if we have prices (to calculate returns/execute trades)
+        valid_dates = sorted(self.prices.index.intersection(grid_dates))
         
-        return filtered_dates
+        return valid_dates
     
     def _select_countries(self, d_sel):
         """
@@ -880,7 +859,7 @@ class Backtest:
         # Calculate cumulative returns
         cum_portfolio = (1 + self.returns).cumprod() - 1
         cum_benchmark = (1 + self.benchmark_returns).cumprod() - 1
-        cum_active = (1 + self.active_return).cumprod() - 1
+        cum_active = cum_portfolio-cum_benchmark
         
         # Helper function to calculate annualized return (geometric)
         def calc_annualized_return(returns_series, days):
@@ -964,11 +943,9 @@ class Backtest:
         bmk_sharpe = calc_sharpe(bmk_ann_return, bmk_ann_vol)
         
         # Calculate metrics for Active
-        active_ann_return = calc_annualized_return(self.active_return, num_days)
-        active_ann_vol = calc_annualized_vol(self.active_return, periods_per_year)
-        active_info_ratio = calc_sharpe(active_ann_return, active_ann_vol)  # Information ratio = Active Return / Active Vol
+        active_ann_return = port_ann_return-bmk_ann_return
         tracking_error = calc_tracking_error(self.active_return, periods_per_year)
-        
+        active_info_ratio = calc_sharpe(active_ann_return, tracking_error)  # Information ratio = Active Return / Active Vol
         # Build statistics dictionary
         stats = {
             'Portfolio': {
@@ -981,7 +958,7 @@ class Backtest:
                 'Beta': port_beta,
                 'Up Capture': port_up_capture,
                 'Down Capture': port_down_capture,
-                'Tracking Error': tracking_error
+                'Tracking Error': np.nan
             },
             'Benchmark': {
                 'Total Return': cum_benchmark.iloc[-1] if len(cum_benchmark) > 0 else np.nan,
@@ -998,7 +975,7 @@ class Backtest:
             'Active': {
                 'Total Return': cum_active.iloc[-1] if len(cum_active) > 0 else np.nan,
                 'Annualized Return': active_ann_return,
-                'Annualized Volatility': active_ann_vol,
+                'Annualized Volatility': tracking_error,
                 'Sharpe Ratio': np.nan,  # Sharpe not applicable for active returns
                 'Max Drawdown': self._calculate_max_drawdown(self.active_return),
                 'Win Rate': (self.active_return > 0).sum() / len(self.active_return) if len(self.active_return) > 0 else np.nan,
@@ -1055,10 +1032,6 @@ class Backtest:
         if self.turnover is None:
             raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
         
-        print("=" * 80)
-        print("PORTFOLIO TURNOVER ANALYSIS")
-        print("=" * 80)
-        
         # Calculate turnover statistics
         avg_turnover = self.turnover.mean()
         median_turnover = self.turnover.median()
@@ -1106,40 +1079,7 @@ class Backtest:
         net_final = cum_net.iloc[-1]
         tc_drag = gross_final - net_final
         
-        # Print summary
-        print(f"\nTURNOVER STATISTICS:")
-        print(f"   Average Turnover: {avg_turnover:.2%}")
-        print(f"   Median Turnover: {median_turnover:.2%}")
-        print(f"   Max Turnover: {max_turnover:.2%}")
-        print(f"   Min Turnover: {min_turnover:.2%}")
-        print(f"   Std Dev: {std_turnover:.2%}")
-        
-        print(f"\nTRANSACTION COST ANALYSIS:")
-        print(f"   Average Transaction Cost: {avg_tc:.4%}")
-        print(f"   Total Transaction Costs: {total_tc:.4%}")
-        print(f"   TC as % of Gross Returns: {tc_as_pct_of_return:.2f}%")
-        print(f"   Gross Final Return: {gross_final:.2%}")
-        print(f"   Net Final Return: {net_final:.2%}")
-        print(f"   Return Drag from TC: {tc_drag:.2%}")
-        
-        print(f"\nTRADING ACTIVITY:")
-        print(f"   Average Countries Bought per Period: {num_bought.mean():.2f}")
-        print(f"   Average Countries Sold per Period: {num_sold.mean():.2f}")
-        print(f"   Total Unique Countries Traded: {len(total_trades_counter)}")
-        print(f"   Total Trading Events: {len(all_trades)}")
-        
-        print(f"\nMOST BOUGHT COUNTRIES (Top {len(most_bought)}):")
-        for i, (country, count) in enumerate(most_bought, 1):
-            print(f"   {i}. {country}: {count} times")
-        
-        print(f"\nMOST SOLD COUNTRIES (Top {len(most_sold)}):")
-        for i, (country, count) in enumerate(most_sold, 1):
-            print(f"   {i}. {country}: {count} times")
-        
-        print(f"\nMOST TRADED COUNTRIES (Top {len(most_traded)}):")
-        for i, (country, count) in enumerate(most_traded, 1):
-            pct = (count / len(all_trades)) * 100
-            print(f"   {i}. {country}: {count} trades ({pct:.1f}% of total)")
+        # (Prints removed for cleanliness)
         
         # Generate visualizations if requested
         if plot:
@@ -1149,7 +1089,7 @@ class Backtest:
             )
         
         # Return results dictionary
-        results = {
+        self.turnover_analysis_results = {
             'turnover_stats': {
                 'mean': avg_turnover,
                 'median': median_turnover,
@@ -1177,7 +1117,7 @@ class Backtest:
             'country_trade_counts': total_trades_counter
         }
         
-        return results
+        return self.turnover_analysis_results
     
     def _plot_turnover_analysis(self, num_bought, num_sold, most_traded, 
                                  bought_counter, sold_counter, total_trades_counter):
@@ -1306,10 +1246,6 @@ class Backtest:
         if self.returns is None:
             raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
         
-        print("=" * 80)
-        print("PERFORMANCE ATTRIBUTION ANALYSIS")
-        print("=" * 80)
-        
         # Step 1: Calculate period returns for each country
         period_country_returns = {}
         
@@ -1393,60 +1329,6 @@ class Backtest:
         
         hit_rate_series = pd.Series(country_hit_rates).sort_values(ascending=False)
         
-        # Print Analysis Results
-        print(f"\nPORTFOLIO ATTRIBUTION SUMMARY:")
-        print(f"   Total Portfolio Return: {total_portfolio_return:.4%}")
-        print(f"   Total Benchmark Return: {total_benchmark_return:.4%}")
-        print(f"   Total Active Return: {total_active_return:.4%}")
-        print(f"   Attribution Check (should be ~0): {attribution_diff:.6%}")
-        
-        print(f"\nTOP {len(top_contributors)} CONTRIBUTING COUNTRIES (Cumulative):")
-        for i, (country, contrib) in enumerate(top_contributors.items(), 1):
-            pct_of_total = (contrib / total_portfolio_return * 100) if total_portfolio_return != 0 else 0
-            avg_weight = avg_weight_by_country.get(country, 0)
-            periods = country_participation.get(country, 0)
-            print(f"   {i}. {country}: {contrib:+.4%} ({pct_of_total:.1f}% of total) | "
-                  f"Avg Wgt: {avg_weight:.2%} | Periods: {periods}")
-        
-        print(f"\nBOTTOM {len(bottom_contributors)} CONTRIBUTING COUNTRIES (Cumulative):")
-        for i, (country, contrib) in enumerate(bottom_contributors.items(), 1):
-            pct_of_total = (contrib / total_portfolio_return * 100) if total_portfolio_return != 0 else 0
-            avg_weight = avg_weight_by_country.get(country, 0)
-            periods = country_participation.get(country, 0)
-            print(f"   {i}. {country}: {contrib:+.4%} ({pct_of_total:.1f}% of total) | "
-                  f"Avg Wgt: {avg_weight:.2%} | Periods: {periods}")
-        
-        print(f"\nTOP {len(top_active_contributors)} ACTIVE CONTRIBUTORS (vs Benchmark):")
-        for i, (country, contrib) in enumerate(top_active_contributors.items(), 1):
-            pct_of_active = (contrib / total_active_return * 100) if total_active_return != 0 else 0
-            print(f"   {i}. {country}: {contrib:+.4%} ({pct_of_active:.1f}% of active return)")
-        
-        print(f"\nBOTTOM {len(bottom_active_contributors)} ACTIVE CONTRIBUTORS (vs Benchmark):")
-        for i, (country, contrib) in enumerate(bottom_active_contributors.items(), 1):
-            pct_of_active = (contrib / total_active_return * 100) if total_active_return != 0 else 0
-            print(f"   {i}. {country}: {contrib:+.4%} ({pct_of_active:.1f}% of active return)")
-        
-        print(f"\nBEST PERFORMING PERIODS:")
-        for date, ret in best_periods.items():
-            # Find top contributor for this period
-            period_contribs = contribution_df.loc[date].sort_values(ascending=False)
-            top_country = period_contribs.index[0] if len(period_contribs) > 0 else "N/A"
-            top_contrib = period_contribs.iloc[0] if len(period_contribs) > 0 else 0
-            print(f"   {date.strftime('%Y-%m-%d')}: {ret:+.2%} | Top: {top_country} ({top_contrib:+.2%})")
-        
-        print(f"\nWORST PERFORMING PERIODS:")
-        for date, ret in worst_periods.items():
-            # Find worst contributor for this period
-            period_contribs = contribution_df.loc[date].sort_values(ascending=True)
-            worst_country = period_contribs.index[0] if len(period_contribs) > 0 else "N/A"
-            worst_contrib = period_contribs.iloc[0] if len(period_contribs) > 0 else 0
-            print(f"   {date.strftime('%Y-%m-%d')}: {ret:+.2%} | Worst: {worst_country} ({worst_contrib:+.2%})")
-        
-        print(f"\nTOP HIT RATES (% of Positive Contribution Periods):")
-        for i, (country, hit_rate) in enumerate(hit_rate_series.head(10).items(), 1):
-            periods_held = country_participation.get(country, 0)
-            print(f"   {i}. {country}: {hit_rate:.1%} | Periods Held: {periods_held}")
-        
         # Generate visualizations if requested
         if plot:
             self._plot_attribution_analysis(
@@ -1456,7 +1338,7 @@ class Backtest:
             )
         
         # Return comprehensive results
-        results = {
+        self.attribution_analysis_results = {
             'contribution_by_period': contribution_df,
             'active_contribution_by_period': active_contribution_df,
             'cumulative_contribution': cumulative_contribution,
@@ -1475,7 +1357,7 @@ class Backtest:
             'worst_periods': worst_periods
         }
         
-        return results
+        return self.attribution_analysis_results
     
     def _plot_attribution_analysis(self, contribution_df, active_contribution_df,
                                     cumulative_contribution, cumulative_active_contribution,
@@ -1613,13 +1495,8 @@ class Backtest:
         """
         Perform Information Coefficient (IC) analysis.
         
-        Measures the predictive power of the scoring signal by calculating the
-        rank correlation between:
-        - Signal (absolute scores or relative score changes based on selection_criteria)
-        - Forward returns (t+1)
-        
-        The IC measures how well the signal predicts future returns, which is
-        critical for evaluating strategy effectiveness.
+        Implements the standardized IC analysis methodology consistent with test_normalized_scores.py,
+        adapted for the Backtest class variables.
         
         Parameters
         ----------
@@ -1631,164 +1508,141 @@ class Backtest:
         Returns
         -------
         dict
-            Dictionary containing IC analysis results including:
-            - IC by period
-            - Rolling IC
-            - Mean IC and statistics
-            - IC t-statistics and p-values
+            Dictionary containing IC analysis results
         """
         if self.returns is None:
             raise ValueError("Backtest has not been run yet. Call run_backtest() first.")
         
-        print("=" * 80)
-        print("INFORMATION COEFFICIENT (IC) ANALYSIS")
-        print("=" * 80)
-        print(f"Selection Criteria: {self.selection_criteria.upper()}")
-        print(f"Rolling Window: {rolling_window} periods")
+        # ------------------------------------------------------------------------
+        # 1. Setup Variables
+        # ------------------------------------------------------------------------
+        periodicity = self.periodicity
+        method = self.selection_criteria
         
-        # Step 1: Prepare signal data based on selection criteria
-        if self.selection_criteria == "absolute":
-            # Use absolute scores as signal
-            signal_df = self.normalized_score.copy()
+        # Extract dates used in the backtest to ensure consistency
+        # We use the same logic as test_normalized_scores.py: 
+        # Start from the most recent date and step backwards by periodicity
+        # User preference: Use normalized_score index for date determination
+        all_dates = self.normalized_score.index
+        selected_dates = sorted(all_dates[::-periodicity])
+        
+        # Filter selected_dates to ensure they exist in normalized_score (redundant but safe)
+        # and prices (to ensure we can calculate returns)
+        valid_dates = self.prices.index.intersection(selected_dates)
+        selected_dates = sorted(valid_dates)
+        
+        if len(selected_dates) < 2:
+            # Warning is useful here as it indicates a data issue
+            print("Warning: Not enough valid dates for IC analysis.")
+            return {}
+        
+        # ------------------------------------------------------------------------
+        # 2. Calculate Period Returns
+        # ------------------------------------------------------------------------
+        # Calculate returns between consecutive rebalancing dates
+        # Returns[t1] = (Price[t1] - Price[t0]) / Price[t0]
+        try:
+            # Ensure all data is numeric
+            prices_numeric = self.prices.apply(pd.to_numeric, errors='coerce')
+            
+            # Calculate returns between consecutive rebalancing dates
+            period_returns_df = prices_numeric.loc[selected_dates].pct_change()
+            period_returns_df = period_returns_df.iloc[1:]
+            
+            # Drop benchmark if present
+            period_returns_df = period_returns_df.drop(columns=[self.bmk], errors='ignore')
+            
+        except Exception as e:
+            print(f"\n✗ ERROR calculating period returns:")
+            print(f"  {str(e)}")
+            raise
+            
+        # ------------------------------------------------------------------------
+        # 3. Calculate Signal
+        # ------------------------------------------------------------------------
+        if method == 'absolute':
+            # ABSOLUTE: Use current scores as signal
+            # Signal[t] = Score[t]
+            signal_df = self.normalized_score.loc[selected_dates]
             signal_description = "Absolute Scores"
         else:  # relative
-            # Use score changes as signal
-            signal_df = self.normalized_score.diff(self.periodicity)
-            signal_description = "Relative Score Changes"
-        
-        print(f"Signal Type: {signal_description}")
-        
-        # Step 2: Calculate forward returns for each country
-        forward_returns_dict = {}
-        
-        for idx, (d_sel, d_ret) in enumerate(self.date_tuples):
-            # Get forward returns from d_sel to d_ret
-            forward_returns = self._calculate_period_returns(d_sel, d_ret)
-            forward_returns_dict[d_sel] = forward_returns
-        
-        # Convert to DataFrame
-        forward_returns_df = pd.DataFrame(forward_returns_dict).T
-        forward_returns_df = forward_returns_df.drop(columns=[self.bmk], errors='ignore')
-        
-        # Step 3: Calculate IC for each period
+            # RELATIVE: Use score changes over periodicity as signal
+            # Signal[t] = Score[t] - Score[t-periodicity]
+            signal_df = self.normalized_score.loc[selected_dates].diff().iloc[1:]
+            signal_description = "Score Changes (Relative)"
+            
+        # ------------------------------------------------------------------------
+        # 4. Calculate IC Statistics
+        # ------------------------------------------------------------------------
         ic_values = []
         ic_dates = []
         ic_details = []
         
-        from scipy.stats import spearmanr, pearsonr
+        from scipy.stats import spearmanr
         
-        for date in forward_returns_df.index:
-            if date in signal_df.index:
-                # Get signal and forward returns at this date
-                signal = signal_df.loc[date]
-                fwd_returns = forward_returns_df.loc[date]
-                
-                # Get common countries (both have data)
-                common_countries = signal.dropna().index.intersection(fwd_returns.dropna().index)
-                
-                if len(common_countries) >= 3:  # Need at least 3 points for correlation
-                    signal_values = signal[common_countries].values
-                    return_values = fwd_returns[common_countries].values
-                    
-                    # Calculate Spearman rank correlation (industry standard for IC)
-                    ic, p_value = spearmanr(signal_values, return_values)
-                    
-                    ic_values.append(ic)
-                    ic_dates.append(date)
-                    ic_details.append({
-                        'date': date,
-                        'ic': ic,
-                        'p_value': p_value,
-                        'num_countries': len(common_countries)
-                    })
+        # Align dates and create (start, end) pairs for each period
+        common_dates = signal_df.index.intersection(period_returns_df.index)
+        dates = [(common_dates[i], common_dates[i+1]) for i in range(len(common_dates)-1)]
         
-        # Convert to Series
+        for date in dates:
+            # Get signal at period start (t0) and return at period end (t1)
+            # Note: period_returns_df[t1] represents the return from t0 -> t1
+            t0 = date[0]
+            t1 = date[1]
+            
+            signal = signal_df.loc[t0]
+            period_returns = period_returns_df.loc[t1]
+            
+            # Get common countries (both have data)
+            common_countries = signal.dropna().index.intersection(period_returns.dropna().index)
+            
+            if len(common_countries) >= 3:  # Need at least 3 points
+                signal_values = signal[common_countries].values
+                return_values = period_returns[common_countries].values
+                    
+                # Calculate Spearman rank correlation
+                ic, p_value = spearmanr(signal_values, return_values)
+                
+                ic_values.append(ic)
+                ic_dates.append(t0)
+                ic_details.append({
+                    'date': t0,
+                    'ic': ic,
+                    'p_value': p_value,
+                    'num_countries': len(common_countries)
+                })
+        
+        if not ic_values:
+            return {}
+            
+        # Create Series
         ic_series = pd.Series(ic_values, index=ic_dates, name='IC')
         
-        # Step 4: Calculate IC statistics
+        # ------------------------------------------------------------------------
+        # 5. Calculate Aggregate Statistics
+        # ------------------------------------------------------------------------
         mean_ic = ic_series.mean()
         median_ic = ic_series.median()
         std_ic = ic_series.std()
-        
-        # IC t-statistic: measures statistical significance of mean IC
-        # t = mean_IC / (std_IC / sqrt(n))
         n_periods = len(ic_series)
+        
+        # IC t-statistic
         ic_t_stat = mean_ic / (std_ic / np.sqrt(n_periods)) if std_ic != 0 else 0
         
-        # Calculate IC information ratio (ICIR): mean IC / std IC
+        # ICIR (IC Information Ratio)
         icir = mean_ic / std_ic if std_ic != 0 else 0
         
-        # Hit rate: % of positive ICs
+        # Hit rate
         hit_rate = (ic_series > 0).sum() / len(ic_series) if len(ic_series) > 0 else 0
         
-        # Step 5: Calculate rolling IC
+        # Rolling stats
         rolling_ic = ic_series.rolling(window=rolling_window, min_periods=rolling_window//2).mean()
         rolling_ic_std = ic_series.rolling(window=rolling_window, min_periods=rolling_window//2).std()
-        
-        # Step 6: Calculate cumulative IC
         cumulative_ic = ic_series.cumsum()
         
-        # Step 7: Calculate IC decay (forward looking analysis if possible)
-        # This would show how IC changes at different forward horizons
-        # For now, we use the current period forward returns
-        
-        # Print results
-        print(f"\nIC STATISTICS:")
-        print(f"   Number of Periods: {n_periods}")
-        print(f"   Mean IC: {mean_ic:.4f}")
-        print(f"   Median IC: {median_ic:.4f}")
-        print(f"   Std Dev IC: {std_ic:.4f}")
-        print(f"   IC t-statistic: {ic_t_stat:.2f}")
-        print(f"   IC Information Ratio (ICIR): {icir:.4f}")
-        print(f"   Hit Rate (% Positive IC): {hit_rate:.2%}")
-        print(f"   Min IC: {ic_series.min():.4f}")
-        print(f"   Max IC: {ic_series.max():.4f}")
-        
-        # Statistical significance interpretation
-        print(f"\nSTATISTICAL SIGNIFICANCE:")
-        if abs(ic_t_stat) > 2.58:
-            print(f"   Mean IC is HIGHLY SIGNIFICANT (99% confidence, |t| > 2.58)")
-        elif abs(ic_t_stat) > 1.96:
-            print(f"   Mean IC is SIGNIFICANT (95% confidence, |t| > 1.96)")
-        elif abs(ic_t_stat) > 1.65:
-            print(f"   Mean IC is MARGINALLY SIGNIFICANT (90% confidence, |t| > 1.65)")
-        else:
-            print(f"   Mean IC is NOT STATISTICALLY SIGNIFICANT (|t| < 1.65)")
-        
-        # IC Quality interpretation
-        print(f"\nIC QUALITY ASSESSMENT:")
-        if abs(mean_ic) > 0.1:
-            print(f"   EXCELLENT predictive power (|IC| > 0.10)")
-        elif abs(mean_ic) > 0.05:
-            print(f"   GOOD predictive power (|IC| > 0.05)")
-        elif abs(mean_ic) > 0.03:
-            print(f"   MODERATE predictive power (|IC| > 0.03)")
-        elif abs(mean_ic) > 0.01:
-            print(f"   WEAK predictive power (|IC| > 0.01)")
-        else:
-            print(f"   VERY WEAK predictive power (|IC| < 0.01)")
-        
-        # ICIR Quality interpretation
-        print(f"\nICIR (IC Information Ratio) ASSESSMENT:")
-        if abs(icir) > 0.5:
-            print(f"   EXCELLENT signal consistency (|ICIR| > 0.5)")
-        elif abs(icir) > 0.3:
-            print(f"   GOOD signal consistency (|ICIR| > 0.3)")
-        elif abs(icir) > 0.1:
-            print(f"   MODERATE signal consistency (|ICIR| > 0.1)")
-        else:
-            print(f"   POOR signal consistency (|ICIR| < 0.1)")
-        
-        # Best and worst IC periods
-        print(f"\nTOP 5 IC PERIODS:")
-        top_5_ic = ic_series.nlargest(5)
-        for date, ic in top_5_ic.items():
-            print(f"   {date.strftime('%Y-%m-%d')}: IC = {ic:.4f}")
-        
-        print(f"\nBOTTOM 5 IC PERIODS:")
-        bottom_5_ic = ic_series.nsmallest(5)
-        for date, ic in bottom_5_ic.items():
-            print(f"   {date.strftime('%Y-%m-%d')}: IC = {ic:.4f}")
+        # ------------------------------------------------------------------------
+        # 6. Store and Return Results
+        # ------------------------------------------------------------------------
         
         # Generate visualizations if requested
         if plot:
@@ -1796,7 +1650,7 @@ class Backtest:
                                   cumulative_ic, rolling_window)
         
         # Return comprehensive results
-        results = {
+        self.ic_analysis_results = {
             'ic_series': ic_series,
             'rolling_ic': rolling_ic,
             'rolling_ic_std': rolling_ic_std,
@@ -1816,7 +1670,7 @@ class Backtest:
             'signal_type': signal_description
         }
         
-        return results
+        return self.ic_analysis_results
     
     def _plot_IC_analysis(self, ic_series, rolling_ic, rolling_ic_std, 
                           cumulative_ic, rolling_window):
