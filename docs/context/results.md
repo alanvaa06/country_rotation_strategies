@@ -1,0 +1,3 @@
+- [T1] Package skeleton: `country_rotation/` package + 7 subpackages created; `tests/conftest.py` with 3 deterministic fixtures; `pyproject.toml` packages.find corrected to `country_rotation*`; 1/1 test pass.
+- [T2] Frozen dataclass config: `PlatformConfig` (DataConfig + BacktestConfig) with `load_config()` JSON loader; `configs/default.json` canonical defaults; 2/2 tests pass (load + immutability).
+- [T4] Pure derived-metric processing: `country_rotation/data/processing.py` — 9 `add_*` functions + `run_processing`; `_safe_div` guards all yield/margin/reconstruction divisions (D8); 12-1 / 6-1 price momentum added; 6/6 new tests + 7 existing = 13/13 green.
