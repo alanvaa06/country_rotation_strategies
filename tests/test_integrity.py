@@ -22,6 +22,44 @@ def test_coverage_matrix(synthetic_factor):
     assert cov.loc["X", "first_date"] == synthetic_factor.index[0]
 
 
+def test_ffill_past_cutoff_is_clean(synthetic_factor):
+    """ffill is backward-looking; a NaN block ending past the cutoff should be CLEAN."""
+    idx = synthetic_factor.index
+    cutoff = idx[200]
+
+    price = synthetic_factor.abs() + 1.0
+    # NaN block spans rows 195-210; cutoff is at row 200
+    price.iloc[195:211] = np.nan
+
+    # ffill only carries the last known value forward — no future data used
+    report = integrity.lookahead_check(
+        pipeline=lambda d: {"f": d["Price"].ffill()},
+        dfs={"Price": price},
+        cutoff=cutoff,
+        perturb_scale=100.0,
+    )
+    assert report.clean, f"ffill falsely flagged as leaky: {report.dirty_outputs}"
+
+
+def test_bfill_past_cutoff_is_dirty(synthetic_factor):
+    """bfill pulls post-cutoff values into rows <= cutoff — must be DIRTY."""
+    idx = synthetic_factor.index
+    cutoff = idx[200]
+
+    price = synthetic_factor.abs() + 1.0
+    # NaN block spans rows 195-205; bfill will fill those from row 206 onward
+    price.iloc[195:206] = np.nan
+
+    report = integrity.lookahead_check(
+        pipeline=lambda d: {"bad": d["Price"].bfill()},
+        dfs={"Price": price},
+        cutoff=cutoff,
+        perturb_scale=100.0,
+    )
+    assert not report.clean, "bfill over NaN-past-cutoff not detected as leaky"
+    assert "bad" in report.dirty_outputs
+
+
 def test_lookahead_check_catches_real_leak(synthetic_factor):
     """A pipeline that back-fills future values into the past must be flagged."""
     # Build a Price df that has NaN rows before the cutoff and real values after.

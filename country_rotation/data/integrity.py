@@ -21,7 +21,7 @@ def lookahead_check(pipeline, dfs, cutoff, perturb_scale=100.0):
     perturbed_in = {}
     for k, v in dfs.items():
         p = v.copy()
-        p.loc[p.index > cutoff] = p.loc[p.index > cutoff] * perturb_scale + perturb_scale
+        p.loc[p.index > cutoff] = p.loc[p.index > cutoff].fillna(0.0) * perturb_scale + perturb_scale
         perturbed_in[k] = p
     pert = pipeline(perturbed_in)
     dirty = []
@@ -30,12 +30,18 @@ def lookahead_check(pipeline, dfs, cutoff, perturb_scale=100.0):
             continue
         a = df.loc[df.index <= cutoff]
         b = pert[name].loc[pert[name].index <= cutoff]
+        cols = sorted(set(a.columns) & set(b.columns))
+        if set(a.columns) != set(b.columns):
+            dirty.append(name)
+            continue
+        a = a[cols]; b = b[cols]
         if not np.allclose(a.fillna(-9e9).to_numpy(), b.fillna(-9e9).to_numpy(), equal_nan=False):
             dirty.append(name)
     return LookaheadReport(clean=not dirty, dirty_outputs=tuple(dirty))
 
 
 def coverage_matrix(dfs):
+    """Return a DataFrame summarising date range, country count, and pct missing per dataset."""
     rows = {}
     for name, df in dfs.items():
         valid = df.notna()
