@@ -1,0 +1,23 @@
+{
+  "data": {
+    "inputs_folder": "Inputs",
+    "classification_file": "Classification.xlsx",
+    "target_date": "2010-01-01",
+    "columns_to_drop": ["Saudi Arabia"],
+    "ffill_limit": 63,
+    "publication_lag_days": {}
+  },
+  "backtest": {
+    "selection_criteria": "relative",
+    "absolute_selection_score": 0.75,
+    "relative_selection_score": 5,
+    "weighting_method": "Equal",
+    "risk_parity_lookback": 120,
+    "bmk": "World",
+    "bmk_weight": 0.5,
+    "mode": "blend",
+    "periodicity": 63,
+    "transaction_cost_bps": 2.0,
+    "execution_lag_days": 0
+  }
+}
