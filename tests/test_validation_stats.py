@@ -1,13 +1,15 @@
 """Tests for country_rotation/validation/statistics.py (Task B1).
 
-Five tests — one per statistic — written TDD-first.
-All use the _equity_from_daily helper to convert daily returns to an equity curve.
+Tests — one per statistic plus canonical-value and property tests.
+All equity-based tests use the _equity_from_daily helper to convert
+daily returns to an equity curve.
 """
 import math
 
 import numpy as np
 import pandas as pd
 import pytest
+from scipy import stats as scipy_stats
 
 from country_rotation.validation import statistics as val
 
@@ -79,6 +81,26 @@ def test_sharpe_tstat_scales_with_sqrt_n():
     assert math.isnan(res_single.t_stat) or res_single.t_stat == 0.0
 
 
+def test_sharpe_ann_equals_daily_times_sqrt252():
+    """sharpe_ann must equal sharpe_daily * sqrt(252) for any valid series."""
+    rng = np.random.default_rng(77)
+    r = rng.normal(0.0005, 0.01, 500)
+    eq = _equity_from_daily(r)
+    res = val.sharpe_significance(eq)
+
+    assert not math.isnan(res.sharpe_daily), "sharpe_daily should not be NaN"
+    assert not math.isnan(res.sharpe_ann), "sharpe_ann should not be NaN"
+    assert abs(res.sharpe_ann - res.sharpe_daily * math.sqrt(252)) < 1e-12, (
+        f"sharpe_ann {res.sharpe_ann} != sharpe_daily*sqrt(252) "
+        f"{res.sharpe_daily * math.sqrt(252)}"
+    )
+
+    # NaN propagation: flat equity → sharpe_ann should also be NaN
+    flat = _equity_from_daily(np.zeros(100))
+    res_flat = val.sharpe_significance(flat)
+    assert math.isnan(res_flat.sharpe_ann), "sharpe_ann should be NaN when sharpe_daily is NaN"
+
+
 # ---------------------------------------------------------------------------
 # Test 2 — probabilistic_sharpe_ratio: monotonic and bounded in (0, 1)
 # ---------------------------------------------------------------------------
@@ -112,6 +134,48 @@ def test_psr_monotonic_and_bounded():
     res_flat = val.probabilistic_sharpe_ratio(flat, benchmark_sharpe=0.0)
     # Should return NaN PSR rather than crash
     assert math.isnan(res_flat.psr) or 0.0 <= res_flat.psr <= 1.0
+
+    # PSRResult uses 'kurtosis' field (non-excess, Normal=3), not 'excess_kurtosis'
+    assert hasattr(psr_mid, "kurtosis"), "PSRResult must have 'kurtosis' field"
+    assert not hasattr(psr_mid, "excess_kurtosis"), (
+        "PSRResult must NOT have 'excess_kurtosis' field (renamed to 'kurtosis')"
+    )
+
+
+def test_psr_canonical_value():
+    """Verify PSR against hand-computed canonical value.
+
+    Uses a known synthetic series with computable moments:
+    returns = [0.01, -0.005, 0.02, 0.0, 0.015] * 200  (n=1000)
+
+    We compute γ3 (bias=False), γ4 (fisher=False, bias=False), SR (ddof=1)
+    manually via numpy/scipy and verify PSR equals
+    Φ(SR * sqrt(n-1) / sqrt(1 − γ3·SR + ((γ4−1)/4)·SR²)) within 1e-12.
+    """
+    base = np.array([0.01, -0.005, 0.02, 0.0, 0.015])
+    returns = np.tile(base, 200)  # n = 1000
+    n = len(returns)
+    assert n == 1000
+
+    # Reference moments computed the same way as the implementation
+    sr = float(np.mean(returns)) / float(np.std(returns, ddof=1))
+    g3 = float(scipy_stats.skew(returns, bias=False))
+    g4 = float(scipy_stats.kurtosis(returns, fisher=False, bias=False))
+
+    variance_term = 1.0 - g3 * sr + ((g4 - 1.0) / 4.0) * sr ** 2
+    variance_term = max(variance_term, 1e-12)
+
+    z_expected = sr * math.sqrt(n - 1) / math.sqrt(variance_term)
+    psr_expected = float(scipy_stats.norm.cdf(z_expected))
+
+    # Build equity curve from the synthetic returns
+    eq = _equity_from_daily(returns)
+    result = val.probabilistic_sharpe_ratio(eq, benchmark_sharpe=0.0)
+
+    assert not math.isnan(result.psr), "PSR should not be NaN for well-formed series"
+    assert abs(result.psr - psr_expected) < 1e-12, (
+        f"PSR {result.psr:.15f} != expected {psr_expected:.15f}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -149,43 +213,84 @@ def test_dsr_penalizes_many_trials():
     assert dsr_many.expected_max_sharpe >= dsr_few.expected_max_sharpe - 1e-9
 
 
+def test_dsr_properties():
+    """DSR/expected_max_sharpe direction and edge-case properties.
+
+    Constructs two trial sets with the same sample variance so that increasing
+    N unambiguously pushes expected_max_sharpe up (more trials = higher benchmark).
+    Also verifies N=1 → expected_max = 0.0.
+    """
+    rng = np.random.default_rng(55)
+    n = 800
+    eq = _equity_from_daily(rng.normal(0.0008, 0.01, n))
+
+    # Build two trial sets with identical empirical std but different N
+    base_trials = rng.normal(0.3, 0.2, 200)
+    trials_5   = base_trials[:5]
+    trials_200 = base_trials  # all 200
+
+    dsr_5   = val.deflated_sharpe_ratio(eq, trial_sharpes=trials_5)
+    dsr_200 = val.deflated_sharpe_ratio(eq, trial_sharpes=trials_200)
+
+    # More trials → higher expected_max_sharpe
+    assert dsr_200.expected_max_sharpe > dsr_5.expected_max_sharpe, (
+        f"expected_max with N=200 ({dsr_200.expected_max_sharpe:.4f}) should exceed "
+        f"N=5 ({dsr_5.expected_max_sharpe:.4f})"
+    )
+
+    # More trials → lower DSR (harder benchmark to beat)
+    assert dsr_200.dsr < dsr_5.dsr, (
+        f"DSR with N=200 ({dsr_200.dsr:.4f}) should be < N=5 ({dsr_5.dsr:.4f})"
+    )
+
+    # N=1 → expected_max = 0.0
+    result_n1 = val.deflated_sharpe_ratio(eq, trial_sharpes=np.array([0.5]))
+    assert result_n1.expected_max_sharpe == 0.0, (
+        f"N=1 expected_max should be 0.0, got {result_n1.expected_max_sharpe}"
+    )
+
+
 # ---------------------------------------------------------------------------
-# Test 4 — newey_west_tstat: detects positive drift
+# Test 4 — newey_west_tstat: takes return series, detects positive drift
 # ---------------------------------------------------------------------------
 
 def test_newey_west_tstat_positive_drift():
-    """NW t-stat should be significantly positive for a strongly trending equity curve."""
+    """NW t-stat should be significantly positive for a strong positive drift series.
+
+    newey_west_tstat now takes a pd.Series of RETURNS (not an equity curve).
+    """
     rng = np.random.default_rng(21)
-    n = 800
+    n = 3000  # large n for reliable t > 2
     # Strong positive drift
-    r_pos = rng.normal(0.001, 0.01, n)
+    r_pos = pd.Series(rng.normal(0.0006, 0.01, n))
     # Near-zero drift
-    r_zero = rng.normal(0.0, 0.01, n)
+    r_zero = pd.Series(rng.normal(0.0, 0.01, n))
 
-    eq_pos  = _equity_from_daily(r_pos)
-    eq_zero = _equity_from_daily(r_zero)
-
-    res_pos  = val.newey_west_tstat(eq_pos)
-    res_zero = val.newey_west_tstat(eq_zero)
+    res_pos  = val.newey_west_tstat(r_pos)
+    res_zero = val.newey_west_tstat(r_zero)
 
     # Positive drift → positive t-stat
     assert res_pos.t_stat > 0, f"Expected positive t-stat, got {res_pos.t_stat}"
 
-    # Strong drift → large t
+    # Strong drift → t > 2
     assert res_pos.t_stat > 2.0, (
-        f"Expected t > 2 for strong drift series, got {res_pos.t_stat:.3f}"
+        f"Expected t > 2 for strong drift series (n={n}), got {res_pos.t_stat:.3f}"
     )
 
-    # Zero drift → t-stat should be much smaller (in absolute terms)
-    assert abs(res_zero.t_stat) < abs(res_pos.t_stat)
+    # Zero drift → |t| should be small (< 2.5 with high probability for n=3000)
+    assert abs(res_zero.t_stat) < 2.5, (
+        f"Expected |t| < 2.5 for zero-mean noise, got {abs(res_zero.t_stat):.3f}"
+    )
 
     # Lag is a non-negative integer
     assert isinstance(res_pos.lags, int) and res_pos.lags >= 0
 
+    # Auto lag: minimum 1 for return series input
+    assert res_pos.lags >= 1, f"Auto lag should be >= 1, got {res_pos.lags}"
+
     # NaN-safety: too-short series
-    short = _equity_from_daily(np.array([0.01, 0.02]))
+    short = pd.Series([0.01, 0.02])
     res_short = val.newey_west_tstat(short)
-    # Should not crash; t may be nan or a number
     assert res_short is not None
 
 

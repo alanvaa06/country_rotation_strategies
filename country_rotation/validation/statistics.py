@@ -1,17 +1,21 @@
 """Validation statistics for country rotation strategy evaluation (Task B1).
 
-Five pure-function statistics operating on equity curves (pd.Series of prices
-starting at an arbitrary positive level). All inputs are equity curves — NOT
-return series — so internal logic converts to simple daily returns via
-``pct_change().dropna()``.
+Five pure-function statistics.  Functions ``sharpe_significance``,
+``probabilistic_sharpe_ratio``, ``deflated_sharpe_ratio``, and
+``bootstrap_sharpe_ci`` operate on equity curves (pd.Series of prices
+starting at an arbitrary positive level) — internal logic converts to
+simple daily returns via ``pct_change().dropna()``.
+
+``newey_west_tstat`` takes a **return series** (pd.Series) directly,
+e.g. strategy-minus-null daily returns (NOT an equity curve).
 
 Functions
 ---------
-sharpe_significance      Lo (2002) IID SE; t = SR_d / SE; NaN-safe.
+sharpe_significance         Lo (2002) IID SE; t = SR_d / SE; NaN-safe.
 probabilistic_sharpe_ratio  Bailey & LdP (2012).
-deflated_sharpe_ratio    Bailey & LdP (2014) with Euler-Mascheroni correction.
-newey_west_tstat         Bartlett kernel, lag = floor(4*(n/100)^(2/9)).
-bootstrap_sharpe_ci      Politis-Romano stationary bootstrap, seeded, wrap-around.
+deflated_sharpe_ratio       Bailey & LdP (2014) with Euler-Mascheroni correction.
+newey_west_tstat            Bartlett kernel, input is a return series.
+bootstrap_sharpe_ci         Politis-Romano stationary bootstrap, seeded, wrap-around.
 
 All result types are frozen dataclasses.
 """
@@ -37,7 +41,7 @@ def _returns_from_equity(equity: pd.Series) -> np.ndarray:
 
 
 def _daily_sharpe(returns: np.ndarray) -> float:
-    """Annualized-but-kept-daily Sharpe (mean/std, ddof=1). Returns NaN when ill-defined."""
+    """Daily Sharpe (mean/std, ddof=1). Returns NaN when ill-defined."""
     if len(returns) < 2:
         return math.nan
     std = float(np.std(returns, ddof=1))
@@ -58,6 +62,9 @@ class SharpeSignificance:
     ----------
     sharpe_daily : float
         Sharpe ratio computed on daily returns (mean/std, ddof=1).
+    sharpe_ann : float
+        Annualized Sharpe ratio: sharpe_daily * sqrt(252).  NaN when
+        sharpe_daily is NaN.
     se : float
         Standard error under the IID assumption:
         SE = sqrt((1 + SR^2 / 2) / n).
@@ -68,6 +75,7 @@ class SharpeSignificance:
     """
 
     sharpe_daily: float
+    sharpe_ann: float
     se: float
     t_stat: float
     n_obs: int
@@ -90,9 +98,12 @@ def sharpe_significance(equity: pd.Series) -> SharpeSignificance:
     returns = _returns_from_equity(equity)
     n = len(returns)
 
+    _sqrt252 = math.sqrt(252.0)
+
     if n < 2:
         return SharpeSignificance(
             sharpe_daily=math.nan,
+            sharpe_ann=math.nan,
             se=math.nan,
             t_stat=math.nan,
             n_obs=n,
@@ -103,6 +114,7 @@ def sharpe_significance(equity: pd.Series) -> SharpeSignificance:
     if math.isnan(sr_d):
         return SharpeSignificance(
             sharpe_daily=sr_d,
+            sharpe_ann=math.nan,
             se=math.nan,
             t_stat=math.nan,
             n_obs=n,
@@ -116,7 +128,13 @@ def sharpe_significance(equity: pd.Series) -> SharpeSignificance:
     else:
         t_stat = sr_d / se
 
-    return SharpeSignificance(sharpe_daily=sr_d, se=se, t_stat=t_stat, n_obs=n)
+    return SharpeSignificance(
+        sharpe_daily=sr_d,
+        sharpe_ann=sr_d * _sqrt252,
+        se=se,
+        t_stat=t_stat,
+        n_obs=n,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -133,15 +151,16 @@ class PSRResult:
         PSR = Phi(z) where Phi is the standard-normal CDF.
         In (0, 1).  NaN for degenerate inputs.
     z_stat : float
-        Z-score: (SR_obs - SR_benchmark) / SE_hat.
+        Z-score: (SR_obs - SR_benchmark) * sqrt(n-1) / sqrt(variance_term).
     sharpe_daily : float
         Observed daily Sharpe (mean/std, ddof=1).
     n_obs : int
         Number of daily returns.
     skewness : float
-        Skewness of daily returns (Fisher / unbiased).
-    excess_kurtosis : float
-        Non-excess kurtosis is NOT used here; standard excess kurtosis (Fisher).
+        Skewness of daily returns (unbiased, Fisher).
+    kurtosis : float
+        **Non-excess** kurtosis of daily returns (Normal → 3),
+        i.e. scipy.stats.kurtosis(r, fisher=False, bias=False).
     """
 
     psr: float
@@ -149,7 +168,7 @@ class PSRResult:
     sharpe_daily: float
     n_obs: int
     skewness: float
-    excess_kurtosis: float
+    kurtosis: float  # non-excess (Normal = 3)
 
 
 def probabilistic_sharpe_ratio(
@@ -158,11 +177,13 @@ def probabilistic_sharpe_ratio(
 ) -> PSRResult:
     """Compute Bailey & LdP (2012) PSR.
 
-    PSR(SR*) = Phi((SR_obs - SR*) * sqrt(n-1) / sqrt(1 - gamma3*SR + (gamma4-1)/4 * SR^2))
+    Canonical formula (ground truth: docs/references/validation_formulas.md):
 
-    where gamma3 = skewness, gamma4 = excess kurtosis + 3 (but we use Fisher excess
-    kurtosis so the formula becomes sqrt(1 - skew*SR_obs + (exkurt/4 + 1/4 - 1/4)*SR_obs^2)
-    — see Bailey & LdP 2012 eq 11 for exact form).
+        PSR(SR*) = Phi( (SR − SR*) · sqrt(n−1)
+                        / sqrt(1 − γ3·SR + ((γ4 − 1)/4)·SR²) )
+
+    where γ3 = unbiased skewness, γ4 = **non-excess** kurtosis (Normal → 3),
+    i.e. ``scipy.stats.kurtosis(r, fisher=False, bias=False)``.
 
     Parameters
     ----------
@@ -185,7 +206,7 @@ def probabilistic_sharpe_ratio(
             sharpe_daily=math.nan,
             n_obs=n,
             skewness=math.nan,
-            excess_kurtosis=math.nan,
+            kurtosis=math.nan,
         )
 
     sr_obs = _daily_sharpe(returns)
@@ -196,20 +217,19 @@ def probabilistic_sharpe_ratio(
             sharpe_daily=sr_obs,
             n_obs=n,
             skewness=math.nan,
-            excess_kurtosis=math.nan,
+            kurtosis=math.nan,
         )
 
     skew = float(stats.skew(returns, bias=False))
-    exkurt = float(stats.kurtosis(returns, fisher=True, bias=False))  # Fisher = excess
+    # Non-excess kurtosis: fisher=False → Normal returns 3
+    g4 = float(stats.kurtosis(returns, fisher=False, bias=False))
 
-    # Bailey & LdP (2012) denominator for the z-stat (eq 8/11 in the paper):
-    # Var(SR_hat) ~ (1/n) * (1 - skew*SR + (exkurt+3-1)/4 * SR^2)
-    # Simplification: denominator = sqrt((1 - skew*sr + (exkurt/4 + 0.5)*sr^2) / (n-1))
-    variance_term = 1.0 - skew * sr_obs + ((exkurt + 3.0) / 4.0 - 1.0 + 0.5) * sr_obs ** 2
+    # Canonical variance term: 1 - γ3·SR + ((γ4 - 1)/4)·SR²
+    variance_term = 1.0 - skew * sr_obs + ((g4 - 1.0) / 4.0) * sr_obs ** 2
 
-    # Guard against negative variance term (very pathological series)
+    # Guard against negative variance term (pathological series) — clamp to 1e-12
     if variance_term <= 0.0:
-        variance_term = 1.0
+        variance_term = 1e-12
 
     se_hat = math.sqrt(variance_term / (n - 1))
 
@@ -220,7 +240,7 @@ def probabilistic_sharpe_ratio(
             sharpe_daily=sr_obs,
             n_obs=n,
             skewness=skew,
-            excess_kurtosis=exkurt,
+            kurtosis=g4,
         )
 
     z_stat = (sr_obs - benchmark_sharpe) / se_hat
@@ -232,7 +252,7 @@ def probabilistic_sharpe_ratio(
         sharpe_daily=sr_obs,
         n_obs=n,
         skewness=skew,
-        excess_kurtosis=exkurt,
+        kurtosis=g4,
     )
 
 
@@ -251,9 +271,11 @@ class DSRResult:
     Attributes
     ----------
     dsr : float
-        DSR = PSR(SR* | SR_benchmark_deflated) in (0, 1).
+        DSR = PSR(SR0) where SR0 is the deflated benchmark.  In (0, 1).
     expected_max_sharpe : float
-        E[max SR] estimated from trial_sharpes distribution.
+        SR0: expected maximum SR under the null of no skill, estimated from
+        the distribution of trial Sharpes using the Euler-Mascheroni
+        order-statistic formula (no mean term — null assumes E[SR] = 0).
     n_trials : int
         Number of trial Sharpes.
     """
@@ -264,55 +286,49 @@ class DSRResult:
 
 
 def _expected_max_sharpe(trial_sharpes: np.ndarray) -> float:
-    """Estimate E[max SR] from Bailey & LdP (2014).
+    """Estimate SR0 (deflated benchmark) from Bailey & LdP (2014).
 
-    Uses the expected maximum of a normal distribution approximation:
-    E[max(SR_1..T)] ~ mu_SR + sigma_SR * ((1 - gamma) * Z(gamma_T) + gamma * Z(gamma_T + 1))
+    Canonical formula (ground truth: docs/references/validation_formulas.md):
 
-    where gamma_T = (1 - gamma) * Z^{-1}(1 - 1/T) + gamma * Z^{-1}(1 - 1/(T*e))
-    gamma = Euler-Mascheroni constant.
+        SR0 = sigma · ((1−γ)·Φ⁻¹(1 − 1/N) + γ·Φ⁻¹(1 − 1/(N·e)))
 
-    In the simplified form used in Bailey & LdP (2014) appendix:
-    E[max SR] = mu + sigma * ((1-gamma)*Phi^{-1}(1-1/T) + gamma*Phi^{-1}(1-1/(T*e)))
+    where sigma = std(trial_sharpes, ddof=1), N = number of trials,
+    γ = Euler–Mascheroni constant ≈ 0.5772.
+
+    **No mean term** — the null hypothesis assumes E[SR] = 0.
+
+    Edge cases: N ≤ 1 or sigma ≤ 0 / NaN → return 0.0.
 
     Parameters
     ----------
     trial_sharpes :
-        Array of Sharpe ratios from T independent trials.
+        Array of Sharpe ratios from N independent trials (daily units).
 
     Returns
     -------
     float
-        Expected maximum Sharpe.
+        SR0: deflated benchmark Sharpe.
     """
-    T = len(trial_sharpes)
-    if T == 0:
+    N = len(trial_sharpes)
+    if N <= 1:
         return 0.0
-    if T == 1:
-        return float(trial_sharpes[0])
 
-    mu = float(np.mean(trial_sharpes))
     sigma = float(np.std(trial_sharpes, ddof=1))
 
-    if sigma == 0.0 or math.isnan(sigma):
-        return mu
+    if sigma <= 0.0 or math.isnan(sigma):
+        return 0.0
 
     gamma = _EULER_MASCHERONI
 
-    # Avoid edge case: 1/T -> 0 when T large
-    # Phi^{-1}(1 - 1/T) and Phi^{-1}(1 - 1/(T*e))
-    p1 = 1.0 - 1.0 / T
-    p2 = 1.0 - 1.0 / (T * math.e)
-
-    # Clamp to valid CDF range
-    p1 = max(1e-10, min(1.0 - 1e-10, p1))
-    p2 = max(1e-10, min(1.0 - 1e-10, p2))
+    # Avoid numeric edge case: 1/N → 0 when N large
+    p1 = max(1e-10, min(1.0 - 1e-10, 1.0 - 1.0 / N))
+    p2 = max(1e-10, min(1.0 - 1e-10, 1.0 - 1.0 / (N * math.e)))
 
     z1 = float(stats.norm.ppf(p1))
     z2 = float(stats.norm.ppf(p2))
 
-    e_max = mu + sigma * ((1.0 - gamma) * z1 + gamma * z2)
-    return e_max
+    sr0 = sigma * ((1.0 - gamma) * z1 + gamma * z2)
+    return sr0
 
 
 def deflated_sharpe_ratio(
@@ -321,16 +337,17 @@ def deflated_sharpe_ratio(
 ) -> DSRResult:
     """Compute Bailey & LdP (2014) Deflated Sharpe Ratio.
 
-    The DSR adjusts the benchmark Sharpe upward to account for multiple testing.
-    E[max SR] is estimated from the distribution of Sharpes across T trials using
-    the Euler-Mascheroni-corrected order-statistic formula.
+    The DSR adjusts the benchmark Sharpe upward to account for multiple testing
+    (selection bias across N trials).  SR0 is estimated from the spread of
+    trial Sharpes via the Euler-Mascheroni order-statistic approximation.
+    DSR = PSR(SR0).
 
     Parameters
     ----------
     equity :
         Equity curve of the strategy under evaluation.
     trial_sharpes :
-        Array of Sharpe ratios from other tested parameter sets / strategies
+        Array of Sharpe ratios from all tested parameter sets / strategies
         (including the current strategy counts as one trial).
 
     Returns
@@ -355,16 +372,16 @@ def deflated_sharpe_ratio(
 
 @dataclass(frozen=True)
 class NWResult:
-    """Result of a Newey-West t-test on the mean daily return.
+    """Result of a Newey-West HAC t-test on the mean of a return series.
 
     Attributes
     ----------
     t_stat : float
-        t = mean(r) / sqrt(NW_variance / n).
+        t = mean(x) / sqrt(NW_variance / n).
     nw_variance : float
-        HAC variance estimate of mean(r).
+        HAC variance estimate of the series mean.
     mean_return : float
-        Mean daily return.
+        Mean of the input return series.
     lags : int
         Number of lags used in the Bartlett kernel.
     n_obs : int
@@ -379,26 +396,29 @@ class NWResult:
 
 
 def newey_west_tstat(
-    equity: pd.Series,
+    series: pd.Series,
     lags: Optional[int] = None,
 ) -> NWResult:
-    """Compute a Newey-West HAC t-statistic for the mean daily return.
+    """Compute a Newey-West HAC t-statistic for the mean of a return series.
 
-    Uses Bartlett kernel. Default lag = floor(4 * (n / 100)^(2/9)).
+    Input is a **return series** (pd.Series), e.g. strategy-minus-null daily
+    returns — NOT an equity curve.  Uses Bartlett kernel.
+
+    Default lag = floor(4 · (n/100)^(2/9)), minimum 1 when auto-selected.
 
     Parameters
     ----------
-    equity :
-        Equity curve.
+    series :
+        Return series (pd.Series of daily returns).  NaNs are dropped.
     lags :
-        Override the automatic lag selection (must be >= 0).
+        Override automatic lag selection (must be >= 0).
 
     Returns
     -------
     NWResult
     """
-    returns = _returns_from_equity(equity)
-    n = len(returns)
+    x = series.dropna().to_numpy(dtype=float)
+    n = len(x)
 
     if n < 2:
         return NWResult(
@@ -409,11 +429,11 @@ def newey_west_tstat(
             n_obs=n,
         )
 
-    mu = float(np.mean(returns))
-    demeaned = returns - mu
+    mu = float(np.mean(x))
+    demeaned = x - mu
 
     if lags is None:
-        lag_count = int(math.floor(4.0 * (n / 100.0) ** (2.0 / 9.0)))
+        lag_count = max(1, int(math.floor(4.0 * (n / 100.0) ** (2.0 / 9.0))))
     else:
         lag_count = max(0, int(lags))
 
@@ -462,10 +482,12 @@ class BootstrapCI:
     ----------
     ci_low : float
         Lower bound of the bootstrap CI (default 2.5th percentile).
+        Sharpe is in daily units (mean/std, ddof=1).
     ci_high : float
         Upper bound of the bootstrap CI (default 97.5th percentile).
+        Sharpe is in daily units (mean/std, ddof=1).
     sharpe_point : float
-        Point estimate of the Sharpe ratio (mean/std, ddof=1, daily).
+        Point estimate of the Sharpe ratio (mean/std, ddof=1, daily units).
     n_boot : int
         Number of bootstrap replications used.
     """
@@ -524,6 +546,9 @@ def bootstrap_sharpe_ci(
     block_length: Optional[float] = None,
 ) -> BootstrapCI:
     """Stationary bootstrap confidence interval for the Sharpe ratio.
+
+    Sharpe ratios (point estimate and CI bounds) are in daily units
+    (mean/std, ddof=1).
 
     Parameters
     ----------
