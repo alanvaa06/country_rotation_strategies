@@ -94,8 +94,7 @@ data = [
 country-rotation = "strategy:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["*.py"]
+include = ["country_rotation*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.xlsx", "*.csv", "*.json"]
