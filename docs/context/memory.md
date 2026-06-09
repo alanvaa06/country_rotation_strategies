@@ -11,3 +11,4 @@
 - # decision: Perturbation must fillna(0.0) before scaling future NaNs so NaN gaps after cutoff are forced to a sentinel and not silently preserved; column-set mismatch between base and perturbed outputs is itself treated as dirty.
 - # decision: Pure transform functions do NOT apply .iloc[window:] slicing — they return full aligned DataFrames; callers decide which rows to consume (legacy class sliced for its own downstream use only).
 - # decision: absolute_percentile uses method='min' (fraction <= self); delta_percentile uses method='average'; both match legacy FactorTransformer.py exactly.
+- # decision: composite contributions stored as {category: DataFrame} absolute weight×score (not legacy proportions); rebase scales by norm/composite so sum of rebased contributions == normalized score.

@@ -12,7 +12,7 @@
 ## Phase 2 — Thesis Validation + Refactor
 - [pending] Brainstorm + spec: package architecture (ingestion / processing / exploration)
 - [pending] Look-ahead & data-integrity audit of current pipeline
-- [in_progress] Refactor to `country_rotation/` package preserving current features (T6 done: factors/transforms.py)
+- [in_progress] Refactor to `country_rotation/` package preserving current features (T8 done: signals/composite.py)
 - [pending] Engine unit tests (pytest): turnover, TC, selection, weights, alignment
 
 ## Phase 3 — Feature Selection

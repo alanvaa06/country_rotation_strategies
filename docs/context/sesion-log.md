@@ -6,3 +6,4 @@
 - [2026-06-09]: T5 complete — integrity.py (lookahead_check + coverage_matrix); 3 tests (clean pipeline, coverage, deliberate leak); 16/16 total green; committed on dev.
 - [2026-06-09]: T5-fix — integrity.py 3 correctness issues patched (NaN perturbation, column alignment, docstring) + 2 regression tests (ffill clean / bfill dirty); 18/18 green; commit 7b5a8f8 on dev.
 - [2026-06-09]: T6 complete — factors/transforms.py (4 pure metric transforms + apply_direction + transform_factor); exact parity with FactorTransformer.py (method='min' for abs_pct, method='average' for delta_pct); 14 new tests; 32/32 total green.
+- [2026-06-09]: T8 complete — signals/composite.py (weighted_metric_average, aggregate_by_category, composite_score, normalize_cross_section, rebase_contributions); catalog-driven category map; contributions redesigned as absolute weight×score (not proportions); 10 tests; 46/46 green.
