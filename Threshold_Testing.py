@@ -22,7 +22,7 @@ from FactorTransformer import FactorTransformer
 from ProcessData import ProcessData
 
 # Set working directory
-os.chdir('D:/Users/avazquez/OneDrive - valmexcasabolsa/Documents/QuantModels/country_rotation')
+#os.chdir('D:/Users/avazquez/OneDrive - valmexcasabolsa/Documents/QuantModels/country_rotation')
 
 # Configure plotting style
 plt.style.use('seaborn-v0_8')

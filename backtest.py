@@ -55,6 +55,10 @@ class Backtest:
     risk_parity_lookback : int, optional
         Lookback window in days for Risk Parity covariance estimation (default 60)
         Only used when weighting_method="Risk_Parity"
+    output_folder : str, optional
+        Folder path to save output plots (default "outputs/plots")
+    save_plots : bool, optional
+        Whether to save plots to files (default False). If True, plots are saved to output_folder.
     """
     
     def __init__(
@@ -69,7 +73,9 @@ class Backtest:
         bmk_weight: float = 0.0,
         periodicity: int = 5,
         transaction_cost_bps: float = 2.0,
-        risk_parity_lookback: int = 60
+        risk_parity_lookback: int = 60,
+        output_folder: str = "outputs/plots",
+        save_plots: bool = False
     ):
         """Initialize the Backtest class with strategy parameters."""
         # Store input parameters
@@ -84,6 +90,13 @@ class Backtest:
         self.periodicity = periodicity
         self.transaction_cost_bps = transaction_cost_bps / 10000.0  # Convert to decimal
         self.risk_parity_lookback = risk_parity_lookback  # Lookback for covariance estimation
+        self.output_folder = output_folder
+        self.save_plots = save_plots
+        
+        # Create output folder if saving plots
+        if self.save_plots:
+            import os
+            os.makedirs(self.output_folder, exist_ok=True)
         
         # Validate inputs
         self._validate_inputs()
@@ -1307,6 +1320,13 @@ class Backtest:
         ax7.grid(True, alpha=0.3)
         
         plt.suptitle('Portfolio Turnover Analysis Dashboard', fontsize=16, fontweight='bold', y=0.995)
+        
+        if self.save_plots:
+            import os
+            filepath = os.path.join(self.output_folder, 'turnover_analysis.png')
+            plt.savefig(filepath, dpi=150, bbox_inches='tight')
+            print(f"  ✓ Plot saved to: {filepath}")
+        
         plt.show()
     
     def performance_attribution_analysis(self, plot=True):
@@ -1578,6 +1598,13 @@ class Backtest:
         ax8.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: '{:.0%}'.format(x)))
         
         plt.suptitle('Performance Attribution Analysis Dashboard', fontsize=16, fontweight='bold', y=0.995)
+        
+        if self.save_plots:
+            import os
+            filepath = os.path.join(self.output_folder, 'attribution_analysis.png')
+            plt.savefig(filepath, dpi=150, bbox_inches='tight')
+            print(f"  ✓ Plot saved to: {filepath}")
+        
         plt.show()
     
     def IC_analysis(self, rolling_window=20, plot=True):
@@ -1887,6 +1914,13 @@ class Backtest:
         
         plt.suptitle('Information Coefficient (IC) Analysis Dashboard', 
                     fontsize=16, fontweight='bold', y=0.995)
+        
+        if self.save_plots:
+            import os
+            filepath = os.path.join(self.output_folder, 'ic_analysis.png')
+            plt.savefig(filepath, dpi=150, bbox_inches='tight')
+            print(f"  ✓ Plot saved to: {filepath}")
+        
         plt.show()
     
     def plot_cumulative_returns(self):
@@ -1929,6 +1963,13 @@ class Backtest:
         ax2.grid(True, alpha=0.3)
         
         plt.tight_layout()
+        
+        if self.save_plots:
+            import os
+            filepath = os.path.join(self.output_folder, 'cumulative_returns.png')
+            plt.savefig(filepath, dpi=150, bbox_inches='tight')
+            print(f"  ✓ Plot saved to: {filepath}")
+        
         plt.show()
     
     def plot_weights_over_time(self, top_n=None):
@@ -2033,5 +2074,11 @@ class Backtest:
         # Reverse legend order to match stack order (visual intuition)
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(handles[::-1], labels[::-1], loc='center left', bbox_to_anchor=(1.02, 0.5), fontsize='small', borderaxespad=0.)
+        
+        if self.save_plots:
+            import os
+            filepath = os.path.join(self.output_folder, 'weights_over_time.png')
+            plt.savefig(filepath, dpi=150, bbox_inches='tight')
+            print(f"  ✓ Plot saved to: {filepath}")
         
         plt.show()

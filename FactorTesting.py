@@ -282,7 +282,7 @@ print("\n" + "=" * 80)
 print("Step 5: Exporting normalized scores to Excel...")
 print("=" * 80)
 
-output_folder = 'Normalized_Scores'
+output_folder = 'outputs/normalized_scores'
 os.makedirs(output_folder, exist_ok=True)
 
 export_count = 0

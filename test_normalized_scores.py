@@ -436,8 +436,10 @@ def print_results_summary(results_df):
             print(f"  {row['Score_Name'][:60]:<60} | P={row['Periodicity']:<2} | IC: {row['Mean_IC']:>7.4f} | t: {row['IC_t_stat']:>6.2f}")
 
 
-def export_results(results_df, output_file='ic_analysis_results.csv'):
+def export_results(results_df, output_file='outputs/ic_analysis/ic_analysis_results.csv'):
     """Export results to CSV."""
+    import os
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
     results_df.to_csv(output_file, index=False)
     print(f"\n✓ Results exported to: {output_file}")
 
@@ -463,7 +465,9 @@ def main():
     export_results(results_df)
     
     # Export to Excel with better formatting
-    with pd.ExcelWriter('ic_analysis_results.xlsx', engine='openpyxl') as writer:
+    import os
+    os.makedirs('outputs/ic_analysis', exist_ok=True)
+    with pd.ExcelWriter('outputs/ic_analysis/ic_analysis_results.xlsx', engine='openpyxl') as writer:
         # Full results
         results_df.to_excel(writer, sheet_name='Full_Results', index=False)
         
@@ -480,7 +484,7 @@ def main():
         top_20 = results_df.nlargest(20, 'Mean_IC')
         top_20.to_excel(writer, sheet_name='Top_20', index=False)
     
-    print(f"✓ Results exported to: ic_analysis_results.xlsx")
+    print(f"✓ Results exported to: outputs/ic_analysis/ic_analysis_results.xlsx")
     
     print("\n" + "=" * 80)
     print("ANALYSIS COMPLETE!")

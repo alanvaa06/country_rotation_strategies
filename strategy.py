@@ -78,3 +78,6 @@ backtest.plot_weights_over_time(top_n=10)
 # 5. IC Analysis
 print("\nRunning IC Analysis...")
 backtest.IC_analysis(plot=True)
+#%%
+
+backtest.historical_weights

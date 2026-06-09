@@ -306,7 +306,7 @@ class ProcessData:
     def transform_process_data(self, 
                               data_frames: Dict[str, pd.DataFrame] = None,
                               classification: pd.DataFrame = None,
-                              output_folder: str = 'ProcessedInputs',
+                              output_folder: str = 'outputs/processed_inputs',
                               export_data: bool = True) -> Dict[str, pd.DataFrame]:
         """
         Transform and process financial data for country-level macro and market analysis.
@@ -324,7 +324,7 @@ class ProcessData:
                          If None, uses self.data_frames.
             classification: DataFrame containing country classifications by Region, Segment, and Type.
                             If None, uses self.classification.
-            output_folder: Folder path to export processed data (default: 'ProcessedInputs').
+            output_folder: Folder path to export processed data (default: 'outputs/processed_inputs').
                            Only used if export_data=True.
             export_data: Whether to export processed data to files (default: True).
         
@@ -681,7 +681,7 @@ class ProcessData:
         print(f"   • Regional groupings: {len(regions_dict)}")
         
         if export_data:
-            print(f"   • Export folder: ProcessedInputs/")
+            print(f"   • Export folder: outputs/processed_inputs/")
         
         derived_metrics = [k for k in processed_data.keys() if k not in file_names]
         if derived_metrics:

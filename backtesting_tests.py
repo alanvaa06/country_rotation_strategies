@@ -71,7 +71,7 @@ class BacktestingTests:
         target_date='2010-01-01',
         columns_to_drop=['Saudi Arabia'],
         normalized_scores_folder='Normalized_Scores',
-        results_folder='Backtest_Results'
+        results_folder='outputs/backtest_results'
     ):
         """Initialize the BacktestingTests class."""
         self.inputs_folder = inputs_folder
@@ -85,6 +85,7 @@ class BacktestingTests:
         self.prices = None
         self.normalized_scores = None
         self.results_df = None
+        self.historical_weights_dict = {}  # Store historical weights from each backtest
         
         # Create results folder if it doesn't exist
         if not os.path.exists(self.results_folder):
@@ -228,7 +229,7 @@ class BacktestingTests:
         
         return param_grid
     
-    def run_single_backtest(self, params, test_name=None, benchmark=None):
+    def run_single_backtest(self, params, test_name=None, benchmark=None, weight_key=None):
         """
         Run a single backtest with given parameters.
         
@@ -240,6 +241,9 @@ class BacktestingTests:
             Name for this test configuration
         benchmark : str, optional
             Name of the benchmark column in prices. If provided, overrides params['bmk'].
+        weight_key : str, optional
+            Key to use for storing historical weights. If None, uses test_name.
+            Useful for naming weights after score file names.
         
         Returns
         -------
@@ -260,6 +264,10 @@ class BacktestingTests:
         
         # Run backtest
         bt.run_backtest()
+        
+        # Store historical weights with weight_key (or test_name as fallback)
+        key_for_weights = weight_key if weight_key else (test_name if test_name else 'Unnamed')
+        self.historical_weights_dict[key_for_weights] = bt.historical_weights
         
         # Get performance summary
         # Transpose to get metrics as index and Entities (Portfolio, Benchmark, Active) as columns
@@ -377,15 +385,20 @@ class BacktestingTests:
                 continue
             
             # Run tests for this score file
+            # Extract score file name without extension for historical weights key
+            score_base_name = score_file.replace('.xlsx', '').replace('.xls', '')
+            
             for idx, params in enumerate(param_grid, 1):
                 test_name = f"{test_prefix}_{score_idx}_{idx}"
+                # Use score file name + test name as the key for historical weights
+                weight_key = f"{score_base_name}_{test_name}"
                 
                 if idx % 50 == 0:  # Print less frequently
                      print(f"   [{idx}/{len(param_grid)}] Running {test_name}...")
                 
                 try:
-                    # Pass benchmark explicitly
-                    result = self.run_single_backtest(params, test_name, benchmark=benchmark)
+                    # Pass benchmark explicitly and weight_key for historical weights
+                    result = self.run_single_backtest(params, test_name, benchmark=benchmark, weight_key=weight_key)
                     result['score_file'] = score_file
                     result['score_index'] = score_idx
                     all_results.append(result)
@@ -507,8 +520,52 @@ class BacktestingTests:
                 print(f"   Std:    {std_val:>8.4f}")
                 print(f"   Min:    {min_val:>8.4f}")
                 print(f"   Max:    {max_val:>8.4f}")
+    
+    def save_historical_weights(self, output_folder='outputs/historical_weights'):
+        """
+        Save all historical weights to CSV files.
+        
+        Each test's historical weights DataFrame is saved as a separate CSV file
+        with the test name as the filename.
+        
+        Parameters
+        ----------
+        output_folder : str, optional
+            Folder to save historical weights (default: 'outputs/historical_weights')
+        
+        Returns
+        -------
+        int
+            Number of files saved
+        """
+        if not self.historical_weights_dict:
+            print("⚠ No historical weights to save")
+            return 0
+        
+        # Create folder if it doesn't exist
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+        
+        saved_count = 0
+        
+        for test_name, weights_df in self.historical_weights_dict.items():
+            if weights_df is not None:
+                # Sanitize filename (replace invalid characters)
+                safe_name = re.sub(r'[<>:"/\\|?*]', '_', str(test_name))
+                filepath = os.path.join(output_folder, f"{safe_name}.csv")
+                
+                try:
+                    weights_df.to_csv(filepath)
+                    saved_count += 1
+                except Exception as e:
+                    print(f"⚠ Error saving {test_name}: {str(e)}")
+        
+        print(f"\n✓ Historical weights saved to: {output_folder}")
+        print(f"   • Files saved: {saved_count}/{len(self.historical_weights_dict)}")
+        
+        return saved_count
 
-
+#%%
 # ============================================================================
 # EXAMPLE USAGE
 # ============================================================================
@@ -534,7 +591,7 @@ if __name__ == "__main__":
     print("=" * 80)
     
     # Load IC Analysis Results to filter score files
-    ic_analysis_file = "ic_analysis_results.xlsx"
+    ic_analysis_file = "outputs/ic_analysis/ic_analysis_results.xlsx"
     ic_threshold = 0.05
     
     print(f"\nLoading IC Analysis from: {ic_analysis_file}")
@@ -609,6 +666,9 @@ if __name__ == "__main__":
     # Save results
     saved_file = bt_tests.save_results("backtest_results_comprehensive.xlsx")
     
+    # Save historical weights to CSV files
+    bt_tests.save_historical_weights()
+    
     # Print summary
     bt_tests.print_summary_statistics()
     
@@ -632,3 +692,5 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("BACKTESTING TESTS COMPLETED!")
     print("=" * 80)
+#%%
+bt_tests.save_historical_weights()
