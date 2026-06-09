@@ -12,3 +12,10 @@
 - # decision: Pure transform functions do NOT apply .iloc[window:] slicing — they return full aligned DataFrames; callers decide which rows to consume (legacy class sliced for its own downstream use only).
 - # decision: absolute_percentile uses method='min' (fraction <= self); delta_percentile uses method='average'; both match legacy FactorTransformer.py exactly.
 - # decision: composite contributions stored as {category: DataFrame} absolute weight×score (not legacy proportions); rebase scales by norm/composite so sum of rebased contributions == normalized score.
+- # decision: IC date grid = scores.index[::-periodicity] then sorted (legacy reverse-sampling); signal pairs grid[i] with forward return grid[i]→grid[i+1]; relative method diffs sampled frame and drops first row — exact legacy parity.
+- # decision: metrics.summary() annualises via calendar days (365/days) not trading days; vol = std*sqrt(ppy); Sharpe has no risk-free rate — matching legacy backtest.py exactly.
+- # decision: backtest/engine.py Engine is a verbatim math port of legacy Backtest (blend mode = bitwise parity, smoke-checked 0.0 diff); active_return = GROSS - bmk (legacy ~:229), historical_weights indexed by d_ret, first-period turnover = 1 - bmk_weight.
+- # decision: Engine 'active' mode = no benchmark row, bmk_weight ignored for construction; period_results still reports bmk_return/active_return; cfg.execution_lag_days ignored until Plan B (parity first).
+- # decision: Engine period_results uses snake_case columns (portfolio_return_gross/net, bmk_return, active_return, turnover, transaction_cost); legacy dict keys were returns/returns_net/benchmark_returns/active_return/turnover/transaction_costs.
+- # decision: cluster_factors() public API defaults to linkage_method='average'; legacy FactorTransformer.py defaulted to 'ward' (line 769) — callers must pass 'ward' explicitly to match legacy exactly.
+- # decision: equal_weight_buy_hold() drops columns with any NaN over the window (not just all-NaN); no rebalancing — rebases each column to 1.0 at first date then takes mean.
