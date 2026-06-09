@@ -58,13 +58,34 @@ def weighted_metric_average(
     so a NaN metric for a country on a date contributes 0.  This matches legacy
     behaviour where non-zero weights for present metrics dominate.
 
+    Strictness: every metric key present in *factor_results* must have an
+    explicit entry in *metric_weights*.  A missing entry would otherwise be
+    summed unscaled (implicit weight 1.0), silently distorting the factor
+    score, so a ``ValueError`` is raised listing the offending metrics.
+
     Args:
         factor_results: Nested dict ``{factor_name: {metric_name: DataFrame(date×country)}}``.
-        metric_weights: ``{metric_name: float}`` weights; need not sum to 1.0 (warning if not).
+        metric_weights: ``{metric_name: float}`` weights covering every metric
+            present in *factor_results*; need not sum to 1.0 (warning if not).
 
     Returns:
         ``{factor_name: DataFrame(date×country)}`` — one weighted-score frame per factor.
+
+    Raises:
+        ValueError: If any metric key in *factor_results* is absent from
+            *metric_weights*.
     """
+    present_metrics: set[str] = {
+        metric for metrics_dict in factor_results.values() for metric in metrics_dict
+    }
+    unweighted = sorted(present_metrics - set(metric_weights))
+    if unweighted:
+        raise ValueError(
+            "metric_weights is missing an explicit weight for metric(s) present "
+            f"in factor_results: {unweighted}. Unweighted metrics would be summed "
+            "with an implicit weight of 1.0."
+        )
+
     weight_sum = sum(metric_weights.values())
     if not np.isclose(weight_sum, 1.0):
         warnings.warn(
@@ -95,8 +116,9 @@ def weighted_metric_average(
                     stacklevel=2,
                 )
 
-        # Sum across metrics (level 0) to get one column per country (level 1)
-        final_factor_score = weighted_df.groupby(level=1, axis=1).sum()
+        # Sum across metrics (level 0) to get one column per country (level 1).
+        # Transpose-groupby-transpose avoids the deprecated groupby(axis=1).
+        final_factor_score = weighted_df.T.groupby(level=1).sum().T
         final_scores[factor_name] = final_factor_score
 
     return final_scores

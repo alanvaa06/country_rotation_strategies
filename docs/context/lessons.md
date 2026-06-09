@@ -1,0 +1,3 @@
+- CLI `--help` smoke tests do NOT catch wiring bugs (wrong kwargs, missing positional args) — every script needs at least one end-to-end smoke test that executes the full main() path on tiny synthetic fixtures.
+- On Windows + Python <3.15, subprocess children writing non-ASCII (e.g. arrows) to a piped stdout crash with cp1252 UnicodeEncodeError — set PYTHONIOENCODING=utf-8 in the test env.
+- Do not duplicate library logic in CLI scripts (build_scores re-implemented the 4 transforms with divergent metric keys); call the package function and use its keys.

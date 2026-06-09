@@ -87,8 +87,8 @@ def main() -> None:  # noqa: C901 — sequential pipeline, complexity is expecte
         dest="metric_weights",
         help=(
             "JSON string mapping metric names to weights, e.g. "
-            '\'{"zscore_percentile": 0.25, "absolute_percentile": 0.25, '
-            '"relative_rank": 0.25, "delta_percentile": 0.25}\'. '
+            '\'{"zscore": 0.25, "absolute_pct": 0.25, '
+            '"relative_rank": 0.25, "delta_pct": 0.25}\'. '
             "Defaults to equal weights across the 4 metrics."
         ),
     )
@@ -125,12 +125,7 @@ def main() -> None:  # noqa: C901 — sequential pipeline, complexity is expecte
     )
     from country_rotation.data.processing import run_processing
     from country_rotation.factors.catalog import CATALOG, get_spec
-    from country_rotation.factors.transforms import (
-        absolute_percentile,
-        delta_percentile,
-        relative_rank,
-        zscore_percentile,
-    )
+    from country_rotation.factors.transforms import transform_factor
     from country_rotation.signals.composite import (
         aggregate_by_category,
         composite_score,
@@ -144,9 +139,9 @@ def main() -> None:  # noqa: C901 — sequential pipeline, complexity is expecte
     cfg = load_config(args.config)
 
     # ------------------------------------------------------------------
-    # Metric weights
+    # Metric weights — keys match transform_factor output
     # ------------------------------------------------------------------
-    _metrics = ["zscore_percentile", "absolute_percentile", "relative_rank", "delta_percentile"]
+    _metrics = ["zscore", "absolute_pct", "relative_rank", "delta_pct"]
     if args.metric_weights is not None:
         metric_weights = json.loads(args.metric_weights)
     else:
@@ -175,7 +170,7 @@ def main() -> None:  # noqa: C901 — sequential pipeline, complexity is expecte
     # Processing
     # ------------------------------------------------------------------
     print("[build_scores] Running derived-metric processing …")
-    processed = run_processing(raw)
+    processed = run_processing(raw, classification)
 
     # ------------------------------------------------------------------
     # Factor transforms — iterate over catalog factors present in processed
@@ -186,21 +181,9 @@ def main() -> None:  # noqa: C901 — sequential pipeline, complexity is expecte
     print(f"[build_scores] Transforming {len(present_factors)} catalog factors …")
     factor_results: dict[str, dict[str, pd.DataFrame]] = {}
     for factor_name in present_factors:
-        df = processed[factor_name]
         spec = get_spec(factor_name)
-        direction = spec.direction
-
-        factor_results[factor_name] = {
-            "zscore_percentile": zscore_percentile(df),
-            "absolute_percentile": absolute_percentile(df),
-            "relative_rank": relative_rank(df),
-            "delta_percentile": delta_percentile(df),
-        }
-        # Apply direction: if lower is better (direction == -1) invert each metric
-        if direction == -1:
-            factor_results[factor_name] = {
-                k: 1.0 - v for k, v in factor_results[factor_name].items()
-            }
+        # transform_factor computes all 4 metrics and applies the direction flag
+        factor_results[factor_name] = transform_factor(processed[factor_name], spec.direction)
 
     if not factor_results:
         print("[build_scores] WARNING: no catalog factors found in processed data. Exiting.")

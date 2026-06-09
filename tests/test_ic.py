@@ -31,6 +31,20 @@ def test_relative_method_no_crash(synthetic_prices, synthetic_scores):
     assert len(out) <= len(out_abs)
 
 
+def test_nonpositive_start_price_excluded():
+    """Countries with p0 <= 0 get a NaN forward return and are dropped from the IC pair."""
+    idx = pd.bdate_range("2020-01-01", periods=10)
+    cols = ["A", "B", "C", "D"]
+    rng = np.random.default_rng(7)
+    px = pd.DataFrame(100.0 + rng.normal(0, 1, (10, 4)), index=idx, columns=cols)
+    px.loc[idx[4], "D"] = 0.0  # zero start price at a grid date (periodicity=5 → rows 4, 9)
+    scores = pd.DataFrame(rng.random((10, 4)), index=idx, columns=cols)
+    out = ic.information_coefficient(scores, px, periodicity=5, method="absolute")
+    # Pair (idx[4] -> idx[9]) survives with only A, B, C (D dropped, not Inf/-1)
+    assert len(out) == 1
+    assert int(out["n_countries"].iloc[0]) == 3
+
+
 def test_ic_stats_t_stat_formula():
     """Hand-built IC series: verify t_stat = mean/std * sqrt(n)."""
     rng = np.random.default_rng(42)

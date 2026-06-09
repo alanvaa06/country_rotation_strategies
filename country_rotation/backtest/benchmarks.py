@@ -35,12 +35,22 @@ def equal_weight_buy_hold(
     pd.Series
         Equity curve indexed like the (sliced) prices DataFrame, starting at
         exactly 1.0 with no NaN values.
+
+    Raises
+    ------
+    ValueError
+        If no column is NaN-free over the selected window.
     """
     if start is not None:
         prices = prices.loc[start:]
 
     # Drop any column with at least one NaN in this window
     clean = prices.dropna(axis=1)
+    if clean.shape[1] == 0:
+        raise ValueError(
+            "equal_weight_buy_hold: no columns survive dropna — every country "
+            "has at least one NaN over the selected window."
+        )
 
     # Rebase each column to 1.0 at the first row
     rebased = clean / clean.iloc[0]

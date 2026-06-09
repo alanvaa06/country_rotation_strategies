@@ -12,8 +12,9 @@
 ## Phase 2 — Thesis Validation + Refactor
 - [pending] Brainstorm + spec: package architecture (ingestion / processing / exploration)
 - [pending] Look-ahead & data-integrity audit of current pipeline
-- [in_progress] Refactor to `country_rotation/` package preserving current features (T8 done: signals/composite.py)
-- [pending] Engine unit tests (pytest): turnover, TC, selection, weights, alignment
+- [done] Refactor to `country_rotation/` package preserving current features — Plan A complete (T1-T13: config, ingestion, processing, integrity, transforms, catalog, composite, metrics, ic, engine, parity, redundancy/benchmarks, CLI scripts)
+- [done] Engine unit tests (pytest): 90/90 green including end-to-end CLI script smoke tests
+- [done] Final-review fixes: CLI wiring, strict metric weights, cleanup queue, script smoke tests
 
 ## Phase 3 — Feature Selection
 - [pending] Propose feature selection process (IC-based, redundancy-aware, OOS-honest)

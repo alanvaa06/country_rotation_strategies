@@ -75,7 +75,7 @@ def main() -> None:
     # Run backtest
     # ------------------------------------------------------------------
     print("[run_backtest] Running Engine …")
-    engine = Engine(scores=scores, prices=prices, cfg=cfg.backtest)
+    engine = Engine(scores, prices, cfg.backtest)
     result = engine.run()
 
     # ------------------------------------------------------------------

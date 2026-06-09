@@ -100,7 +100,6 @@ def add_yields(dfs: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     Uses ``_safe_div``: negative/zero multiples produce NaN (D8 fix).
     """
     out = dict(dfs)
-    ones = pd.DataFrame  # alias for clarity — we create a scalar-1 df per call
 
     def _inv(key: str) -> Optional[pd.DataFrame]:
         if key in out:

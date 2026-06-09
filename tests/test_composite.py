@@ -175,6 +175,15 @@ def test_normalize_cross_section_values_in_01():
     assert (norm.values <= 1.0).all()
 
 
+def test_weighted_average_missing_metric_weight_raises():
+    """Metrics present in factor_results but absent from metric_weights raise ValueError."""
+    idx = pd.bdate_range("2020-01-01", periods=3)
+    fr = _factor_results(idx, ["A", "B"])
+    incomplete = {"zscore": 0.5, "absolute_pct": 0.5}  # relative_rank, delta_pct missing
+    with pytest.raises(ValueError, match="delta_pct.*relative_rank"):
+        composite.weighted_metric_average(fr, incomplete)
+
+
 def test_weighted_average_zero_weight_metric_excluded():
     """Metrics with weight=0 contribute nothing to the factor score."""
     idx = pd.bdate_range("2020-01-01", periods=3)

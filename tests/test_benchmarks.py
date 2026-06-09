@@ -58,6 +58,14 @@ def test_nan_column_dropped():
     assert len(eq) == 100
 
 
+def test_eqw_all_columns_nan_raises():
+    """If every column has at least one NaN, a ValueError is raised."""
+    idx = pd.bdate_range("2020-01-01", periods=10)
+    prices = pd.DataFrame({"A": np.full(10, np.nan), "B": np.full(10, np.nan)}, index=idx)
+    with pytest.raises(ValueError, match="no columns survive dropna"):
+        benchmarks.equal_weight_buy_hold(prices)
+
+
 def test_eqw_single_column():
     """With one clean column the result is that column rebased to 1."""
     idx = pd.bdate_range("2021-01-01", periods=50)

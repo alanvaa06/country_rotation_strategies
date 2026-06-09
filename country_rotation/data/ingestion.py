@@ -13,6 +13,7 @@ fill_gaps            -- ffill-only gap filling (NO bfill; no future leakage)
 from __future__ import annotations
 
 import os
+import warnings
 from typing import Union
 
 import pandas as pd
@@ -37,18 +38,21 @@ def read_inputs(folder: str, skiprows: int = 2) -> dict[str, pd.DataFrame]:
     dict[str, pd.DataFrame]
         Keys are filenames without extension; values are DataFrames with a
         DatetimeIndex (index_col=0, parse_dates=True).
+
+    Raises
+    ------
+    FileNotFoundError
+        If *folder* does not exist.
     """
     result: dict[str, pd.DataFrame] = {}
 
     if not os.path.exists(folder):
-        print(f"Error: The folder '{folder}' does not exist.")
-        return result
+        raise FileNotFoundError(f"Inputs folder '{folder}' does not exist.")
 
     for filename in os.listdir(folder):
         if filename.endswith(".xlsx") or filename.endswith(".xls"):
             file_path = os.path.join(folder, filename)
             try:
-                print(f"Reading {filename}...")
                 df = pd.read_excel(
                     file_path,
                     skiprows=skiprows,
@@ -58,7 +62,9 @@ def read_inputs(folder: str, skiprows: int = 2) -> dict[str, pd.DataFrame]:
                 key = filename.replace(".xlsx", "").replace(".xls", "")
                 result[key] = df
             except Exception as exc:  # noqa: BLE001
-                print(f"Could not read {filename}. Error: {exc}")
+                warnings.warn(
+                    f"Could not read {filename}. Error: {exc}", stacklevel=2
+                )
 
     return result
 

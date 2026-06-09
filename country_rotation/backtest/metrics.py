@@ -155,14 +155,9 @@ def summary(
 
     up_cap, dn_cap = _capture(port, bmk)
 
-    # _ann_vol returns NaN when len < 2; map that to 0.0 only when the
-    # series is actually constant (std == 0), so the test assertion holds.
-    if len(port) >= 2 and np.isnan(port_ann_vol) is False:
-        ann_vol_out = port_ann_vol
-    elif len(port) >= 2 and float(port.std()) == 0.0:
-        ann_vol_out = 0.0
-    else:
-        ann_vol_out = port_ann_vol  # NaN for truly degenerate inputs
+    # _ann_vol already returns 0.0 for constant series (std == 0) and NaN
+    # only for truly degenerate inputs (len < 2) — use it directly.
+    ann_vol_out = port_ann_vol
 
     return {
         "ann_return": port_ann_ret,

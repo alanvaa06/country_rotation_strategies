@@ -19,3 +19,6 @@
 - # decision: Engine period_results uses snake_case columns (portfolio_return_gross/net, bmk_return, active_return, turnover, transaction_cost); legacy dict keys were returns/returns_net/benchmark_returns/active_return/turnover/transaction_costs.
 - # decision: cluster_factors() public API defaults to linkage_method='average'; legacy FactorTransformer.py defaulted to 'ward' (line 769) — callers must pass 'ward' explicitly to match legacy exactly.
 - # decision: equal_weight_buy_hold() drops columns with any NaN over the window (not just all-NaN); no rebalancing — rebases each column to 1.0 at first date then takes mean.
+- # decision: weighted_metric_average is strict — every metric key present in factor_results must have an explicit metric_weights entry, else ValueError (no silent implicit weight 1.0).
+- # decision: build_scores.py uses transforms.transform_factor metric keys (zscore, absolute_pct, relative_rank, delta_pct) as the canonical metric-weight vocabulary.
+- # decision: read_inputs raises FileNotFoundError on missing folder; library code uses warnings.warn, never print.

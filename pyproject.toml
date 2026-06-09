@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "country-rotation-strategy"
-version = "1.0.0"
+version = "0.2.0"
 description = "Quantitative country rotation strategy using financial and economic data"
 authors = [
     {name = "Alan Vazquez, CFA, Master Jedi"}
@@ -89,9 +89,6 @@ data = [
 # Homepage = "https://github.com/yourusername/country-rotation-strategy"
 # Documentation = "https://github.com/yourusername/country-rotation-strategy/wiki"
 # Repository = "https://github.com/yourusername/country-rotation-strategy.git"
-
-[project.scripts]
-country-rotation = "strategy:main"
 
 [tool.setuptools.packages.find]
 include = ["country_rotation*"]

@@ -97,7 +97,8 @@ def information_coefficient(
         p0 = prices_sampled.loc[t0]
         p1 = prices_sampled.loc[t1]
 
-        fwd_ret = p1 / p0 - 1.0
+        # Guard nonpositive start prices: forward return is undefined → NaN
+        fwd_ret = p1 / p0.where(p0 > 0) - 1.0
 
         # common non-NaN countries
         valid = signal.dropna().index.intersection(fwd_ret.dropna().index)

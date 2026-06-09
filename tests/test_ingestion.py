@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import pytest
+
 from country_rotation.data import ingestion
 
 
@@ -27,6 +29,11 @@ def test_publication_lag_shifts_data():
     out = ingestion.apply_publication_lag(dfs, {"EBITDA": 2})
     assert out["EBITDA"]["A"].iloc[2] == dfs["PE"]["A"].iloc[0]  # shifted by 2
     assert out["PE"].equals(dfs["PE"])  # unlagged metric untouched
+
+
+def test_read_inputs_missing_folder_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        ingestion.read_inputs(str(tmp_path / "does_not_exist"))
 
 
 def test_fill_gaps_never_uses_future():
