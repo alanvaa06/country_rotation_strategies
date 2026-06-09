@@ -195,6 +195,7 @@ def screen_factors(
     min_sign_consistency: float = 0.7,
     fdr_q: float = 0.10,
     exploratory: set | None = None,
+    min_mean_ic: float = 0.0,
 ) -> FactorScreenResult:
     """Screen factors on anchored train folds with a never-touched lockbox.
 
@@ -209,7 +210,7 @@ def screen_factors(
        :func:`country_rotation.backtest.ic.information_coefficient`
        (``method='absolute'``).
     3. Gates (all must pass to be kept):
-       (a) mean of fold-mean ICs > 0;
+       (a) mean of fold-mean ICs > ``min_mean_ic`` (default 0);
        (b) sign consistency ``frac(fold mean > 0) >= min_sign_consistency``
            (NaN folds count as failures);
        (c) BH-FDR: adjusted q <= ``fdr_q`` (``fdr_q / 2`` for factors in
@@ -236,6 +237,11 @@ def screen_factors(
         BH false-discovery-rate level.
     exploratory :
         Factor names held to the stricter ``fdr_q / 2`` bar.
+    min_mean_ic :
+        Minimum required mean of fold-mean ICs for gate (a).  Default 0.0
+        (any positive mean passes).  Setting to e.g. 0.5 requires the
+        cross-fold average IC to exceed 0.5; 1.5 is impossible (IC ≤ 1),
+        so all factors are dropped.
 
     Returns
     -------
@@ -277,7 +283,7 @@ def screen_factors(
         fold_means = fold_ic.loc[name].to_numpy(dtype=float)
         valid = fold_means[np.isfinite(fold_means)]
 
-        mean_positive = len(valid) > 0 and float(valid.mean()) > 0.0
+        mean_positive = len(valid) > 0 and float(valid.mean()) > min_mean_ic
         sign_consistency = float((valid > 0.0).sum()) / n_folds  # NaN folds fail
         q_bar = fdr_q / 2.0 if name in exploratory else fdr_q
         fdr_pass = bh_qvalues[name] <= q_bar

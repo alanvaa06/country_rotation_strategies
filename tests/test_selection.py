@@ -129,6 +129,42 @@ def test_lockbox_isolation(synthetic_prices):
 # verify_on_lockbox
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# min_mean_ic gate (Task B4 improvement to B3)
+# ---------------------------------------------------------------------------
+
+def test_min_mean_ic_oracle_kept(synthetic_prices):
+    """Oracle factor has mean fold IC ~1.0; min_mean_ic=0.5 still keeps it."""
+    px = synthetic_prices[_countries(synthetic_prices)]
+    factors = _planted_factors(px)
+
+    res = wf.screen_factors(
+        factors, px, periodicity=PERIODICITY, n_folds=4, min_mean_ic=0.5
+    )
+
+    assert "good" in res.kept, (
+        "Oracle factor should survive min_mean_ic=0.5 (its IC is ~1.0)"
+    )
+
+
+def test_min_mean_ic_all_dropped(synthetic_prices):
+    """min_mean_ic=1.5 is impossible; no factor (not even the oracle) is kept."""
+    px = synthetic_prices[_countries(synthetic_prices)]
+    factors = _planted_factors(px)
+
+    res = wf.screen_factors(
+        factors, px, periodicity=PERIODICITY, n_folds=4, min_mean_ic=1.5
+    )
+
+    assert len(res.kept) == 0, (
+        "min_mean_ic=1.5 should drop every factor (IC is capped at 1.0)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# verify_on_lockbox
+# ---------------------------------------------------------------------------
+
 def test_verify_on_lockbox(synthetic_prices):
     px = synthetic_prices[_countries(synthetic_prices)]
     factors = _planted_factors(px)
