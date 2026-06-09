@@ -1,0 +1,7 @@
+# Memory — Architecture & Decisions
+
+- # decision: All market data (xlsx/csv) gitignored — repo is code-only, safe for public hosting.
+- # decision: Strategy universe segments = World / DM / EM (Asia, Europe, LatAm as secondary regions).
+- # decision: Score pipeline = raw factor -> 4 metrics (expanding zscore, abs pct, relative rank, 63d delta pct) -> weighted factor score -> category aggregate -> composite -> cross-sectional 0-1 normalization.
+- # decision: Validation standard = Deflated Sharpe, PSR, anchored walk-forward, Monte-Carlo random-selection null, equal-weight buy-and-hold null (adopted from docs/superpowers/plans/2026-06-07 methodology; must be ported to this codebase).
+- # decision: docs/superpowers plans pre-2026-06 reference a `momentum_strategy` package from another repo — methodology reusable, file paths are not.
