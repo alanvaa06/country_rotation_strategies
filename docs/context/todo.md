@@ -30,7 +30,7 @@
 - [pending] Validation harness: DSR, PSR, walk-forward, MC null
 
 ## Phase 6 — Visualization Report
-- [pending] Performance abs/rel, risk abs/rel, IC analysis, score building-block decomposition
+- [done] Performance abs/rel, risk abs/rel, IC analysis, score building-block decomposition
 
 ## Phase 7 — Strategy Selection
 - [pending] Explore dataset, select profitable strategy per EM / DM / World
