@@ -41,63 +41,195 @@ from country_rotation.reporting.report import (
     table_weights_latest,
 )
 
-__all__ = ["build_strategy_pane", "render_dashboard"]
+__all__ = [
+    "build_strategy_pane",
+    "evidence_grade",
+    "render_dashboard",
+    "stat_cards",
+    "verdict_banner",
+]
 
 
 # ---------------------------------------------------------------------------
-# Verdict-derived components (banner, stat cards, scorecard table)
+# Verdict-derived components (evidence grade, banner, stat cards, scorecard)
 # ---------------------------------------------------------------------------
 
-_BANNER_PASS = (
-    "background:#d1fae5;border:1px solid #10b981;color:#065f46;"
-)
-_BANNER_FAIL = (
-    "background:#fee2e2;border:1px solid #ef4444;color:#991b1b;"
-)
 _CHECK_LABELS = {
     "no_overfitting": "No Overfitting",
     "param_stable": "Param Stable",
     "statistically_significant": "Statistically Significant",
 }
 
+# Gate table: (key, label, stats key, threshold text, predicate, kind, decimals)
+# kind 'core'  = selection-skill / robustness evidence (MC, WF, OOS, stability)
+# kind 'power' = sample-size-sensitive certification gates (DSR, PSR, t, CI)
+_GATE_SPECS = (
+    ("mc_p", "MC p", "mc_p_value", "≤ 0.05",
+     lambda x: x <= 0.05, "core", 3),
+    ("wf_eff", "WF eff", "wf_efficiency", "≥ 0.5",
+     lambda x: x >= 0.5, "core", 2),
+    ("oos_folds", "OOS folds", "frac_oos_positive", "≥ 0.5",
+     lambda x: x >= 0.5, "core", 2),
+    ("dsr", "DSR", "dsr", "≥ 0.95",
+     lambda x: x >= 0.95, "power", 3),
+    ("psr", "PSR", "psr", "≥ 0.95",
+     lambda x: x >= 0.95, "power", 3),
+    ("active_t", "Active t", "sharpe_t_stat", "≥ 2.0",
+     lambda x: x >= 2.0, "power", 2),
+    ("ci_low", "Boot CI low", "__ci_low__", "> 0",
+     lambda x: x > 0, "power", 3),
+    ("stability", "Stability", "stability_frac_positive", "≥ 0.7",
+     lambda x: x >= 0.7, "core", 2),
+)
 
-def _check_pill(name: str, passed: bool) -> str:
-    style = _PASS_STYLE if passed else _FAIL_STYLE
-    label = _CHECK_LABELS.get(name, name)
-    word = "PASS" if passed else "FAIL"
-    return (
-        f'<span style="{style}margin-right:8px;" title="{name}">'
-        f"{label}: {word}</span>"
-    )
+_TIER_LABELS = {
+    "certified": "CERTIFIED",
+    "power_limited": "NOT YET CERTIFIED — power-limited",
+    "weak": "WEAK EVIDENCE",
+    "negative": "NEGATIVE",
+}
+
+_TIER_NOTES = {
+    "certified": (
+        "All statistical gates pass — selection skill and realized "
+        "performance certified at the pre-registered thresholds."
+    ),
+    "power_limited": (
+        "Selection skill statistically significant; sample too short to "
+        "certify the realized IR — no overfitting signatures detected "
+        "(see forensics)."
+    ),
+    "weak": (
+        "Core evidence incomplete — selection skill is not yet "
+        "distinguishable from chance on this sample."
+    ),
+    "negative": (
+        "No demonstrated selection skill — realized active performance "
+        "is non-positive and the Monte-Carlo null is not rejected."
+    ),
+}
+
+
+def _gate_value(stats: dict, stats_key: str) -> float:
+    if stats_key == "__ci_low__":
+        ci = stats.get("bootstrap_ci") or [None, None]
+        v = ci[0]
+    else:
+        v = stats.get(stats_key)
+    try:
+        return float(v) if v is not None else float("nan")
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def evidence_grade(verdict: dict) -> dict:
+    """Evidence grade for one strategy verdict (neutral, power-aware tiers).
+
+    Tier rules (evaluated on ``verdict['stats']``; NaN/missing values fail
+    their gate):
+
+    1. ``certified`` (\"CERTIFIED\") — every gate passes: MC p ≤ 0.05,
+       WF efficiency ≥ 0.5, frac OOS positive ≥ 0.5, DSR ≥ 0.95,
+       PSR ≥ 0.95, active Sharpe t ≥ 2.0, bootstrap CI low > 0,
+       stability frac-positive ≥ 0.7.
+    2. ``negative`` (\"NEGATIVE\") — annualized active IR
+       (``sharpe_ann``) ≤ 0 AND the Monte-Carlo null is not rejected
+       (MC p > 0.05): no evidence of skill.
+    3. ``power_limited`` (\"NOT YET CERTIFIED — power-limited\") — the
+       selection-skill core passes (MC p ≤ 0.05, WF eff ≥ 0.5,
+       frac OOS ≥ 0.5, stability ≥ 0.7) and IR > 0, but one or more
+       sample-size-sensitive power gates fail (DSR / PSR / active t /
+       bootstrap CI low). The signal is real at MC/WF standards; the sample
+       is too short to certify the realized IR.
+    4. ``weak`` (\"WEAK EVIDENCE\") — everything else (MC or WF fail with
+       non-negative evidence elsewhere, stability break, missing stats).
+
+    Returns
+    -------
+    dict with keys ``tier``, ``label``, ``note`` and ``gates`` — a list of
+    per-gate dicts (``key``, ``label``, ``value``, ``threshold``, ``passed``,
+    ``kind``, ``state``). Gate ``state`` is ``pass`` / ``fail`` / ``amber``;
+    amber marks power-gate failures in the power-limited tier.
+    """
+    stats = verdict.get("stats") or {}
+    if not stats:
+        return {
+            "tier": "weak",
+            "label": _TIER_LABELS["weak"],
+            "note": "No validation statistics available for this strategy.",
+            "gates": [],
+        }
+
+    gates = []
+    for key, label, stats_key, threshold, pred, kind, decimals in _GATE_SPECS:
+        val = _gate_value(stats, stats_key)
+        passed = bool(not np.isnan(val) and pred(val))
+        gates.append({
+            "key": key,
+            "label": label,
+            "value": _fmt(val, decimals=decimals),
+            "threshold": threshold,
+            "passed": passed,
+            "kind": kind,
+            "state": "pass" if passed else "fail",
+        })
+    by_key = {g["key"]: g for g in gates}
+
+    sharpe_ann = _gate_value(stats, "sharpe_ann")
+    core_pass = all(g["passed"] for g in gates if g["kind"] == "core")
+    all_pass = all(g["passed"] for g in gates)
+    mc_pass = by_key["mc_p"]["passed"]
+
+    if all_pass:
+        tier = "certified"
+    elif (np.isnan(sharpe_ann) or sharpe_ann <= 0) and not mc_pass:
+        tier = "negative"
+    elif core_pass and sharpe_ann > 0:
+        tier = "power_limited"
+        for g in gates:  # power-gate fails are statistical power, not skill
+            if g["kind"] == "power" and not g["passed"]:
+                g["state"] = "amber"
+    else:
+        tier = "weak"
+
+    return {
+        "tier": tier,
+        "label": _TIER_LABELS[tier],
+        "note": _TIER_NOTES[tier],
+        "gates": gates,
+    }
 
 
 def verdict_banner(verdict: dict) -> str:
-    """Banner: overall verdict + the three scorecard checks, colored."""
-    v = verdict.get("verdict", {}) or {}
-    overall = bool(v.get("overall", False))
-    checks = v.get("checks", {}) or {}
+    """Evidence-grade banner: tier line + per-gate chips + plain-language note.
 
-    style = _BANNER_PASS if overall else _BANNER_FAIL
-    word = "PASS" if overall else "FAIL"
-    pills = "".join(
-        _check_pill(name, bool(passed)) for name, passed in sorted(checks.items())
+    Replaces the old binary \"Overall Verdict: PASS/FAIL\" wall — sub-evidence
+    is shown per gate so a power-limited certification (MC + walk-forward
+    pass, DSR short on sample size) is not misread as overfitting.
+    """
+    grade = evidence_grade(verdict)
+    chips = "".join(
+        f'<span class="gate-chip gate-{g["state"]}" '
+        f'title="{g["label"]}: {g["value"]} (threshold {g["threshold"]})">'
+        f'{g["label"]} {g["value"]} <small>{g["threshold"]}</small> '
+        f'{"PASS" if g["passed"] else "fail"}</span>'
+        for g in grade["gates"]
     )
+    chips_html = f'<div class="gate-chips">{chips}</div>' if chips else ""
     return (
-        f'<div class="banner" style="{style}padding:10px 14px;border-radius:6px;'
-        f'margin:8px 0 16px 0;">'
-        f'<strong style="font-size:1.05rem;">Overall Verdict: {word}</strong>'
-        f'<span style="margin-left:16px;">{pills}</span>'
+        f'<div class="banner grade-{grade["tier"]}">'
+        f'<div class="grade-line"><strong>{grade["label"]}</strong></div>'
+        f"{chips_html}"
+        f'<p class="grade-note">{grade["note"]}</p>'
         f"</div>"
     )
 
 
 def _card(label: str, value: str) -> str:
     return (
-        '<div class="card" style="background:#fff;border:1px solid #e5e7eb;'
-        'border-radius:6px;padding:8px 12px;min-width:130px;'
-        'box-shadow:0 1px 2px rgba(0,0,0,0.06);">'
-        f'<div style="font-size:0.72rem;color:#6b7280;">{label}</div>'
-        f'<div style="font-size:1.05rem;font-weight:600;color:#111827;">{value}</div>'
+        '<div class="card">'
+        f'<div class="card-label">{label}</div>'
+        f'<div class="card-value">{value}</div>'
         "</div>"
     )
 
@@ -124,10 +256,7 @@ def stat_cards(verdict: dict) -> str:
         _card("IC rel (mean)", _fmt(ic_rel.get("mean_ic"), decimals=4)),
         _card("IC rel (t)", _fmt(ic_rel.get("t_stat"))),
     ]
-    return (
-        '<div class="cards" style="display:flex;flex-wrap:wrap;gap:10px;'
-        'margin-bottom:16px;">' + "".join(cards) + "</div>"
-    )
+    return '<div class="cards">' + "".join(cards) + "</div>"
 
 
 def _pass_cell(passed: Optional[bool]) -> str:
@@ -206,7 +335,8 @@ def scorecard_from_verdict(verdict: dict) -> str:
     overall = bool(v.get("overall", False))
     html += (
         "<tr style='border-top:2px solid #374151;'>"
-        "<td colspan='3'><strong>Overall Verdict</strong></td>"
+        "<td colspan='3'><strong>All-Gates Aggregate</strong> "
+        "(see evidence grade above for the power-aware read)</td>"
         f"<td>{_pass_cell(overall)}</td></tr>"
     )
     for note in v.get("notes") or []:
@@ -222,8 +352,21 @@ def scorecard_from_verdict(verdict: dict) -> str:
 # Strategy pane
 # ---------------------------------------------------------------------------
 
-def _h3(txt: str) -> str:
-    return f"<h3 style='margin:18px 0 6px;color:#1f2937;'>{txt}</h3>"
+def _section(title: str, body_html: str) -> str:
+    """Collapsible section: <button> header (keyboard accessible) + hidden body.
+
+    All sections start COLLAPSED (display:none, aria-expanded=false); the
+    shell's ``toggleSec`` JS flips visibility and the ▸/▾ arrow. Banner and
+    stat cards stay outside sections so they are always visible.
+    """
+    return (
+        '<section class="sec">'
+        '<button class="sec-toggle" type="button" aria-expanded="false" '
+        'onclick="toggleSec(this)">'
+        '<span class="sec-arrow">▸</span> ' + title + "</button>"
+        '<div class="sec-body" style="display:none">' + body_html + "</div>"
+        "</section>"
+    )
 
 
 def build_strategy_pane(
@@ -314,65 +457,72 @@ def build_strategy_pane(
     # ------------------------------------------------------------------
     parts: list[str] = []
 
+    # Always visible: evidence-grade banner + headline stat cards.
     parts.append(verdict_banner(verdict))
     parts.append(stat_cards(verdict))
 
     # --- Performance (absolute + relative) ---
-    parts.append(_h3("Performance"))
+    perf: list[str] = []
     for b64, alt in (
         (fig_cumulative(engine_result, eqw_equity), "Cumulative Return"),
         (fig_drawdown(engine_result), "Drawdown"),
         (fig_rolling_12m(engine_result), "Rolling 12m Return"),
     ):
         if b64:
-            parts.append(_img_tag(b64, alt))
+            perf.append(_img_tag(b64, alt))
+    parts.append(_section("Performance", "\n".join(perf)))
 
-    parts.append(_h3("Per-Year Performance"))
-    parts.append(table_per_year(dr, db))
+    parts.append(_section("Per-Year Performance", table_per_year(dr, db)))
 
     # --- Risk ---
-    parts.append(_h3("Risk (absolute + relative)"))
-    parts.append(table_risk(daily_summary, period_summary))
+    parts.append(_section(
+        "Risk (absolute + relative)",
+        table_risk(daily_summary, period_summary),
+    ))
 
     # --- Weights ---
-    parts.append(_h3("Portfolio Weights"))
+    wts: list[str] = []
     b64_w = fig_weights(engine_result)
     if b64_w:
-        parts.append(_img_tag(b64_w, "Weights"))
-    parts.append("<h4 style='margin:8px 0 4px;'>Latest Weights</h4>")
-    parts.append(table_weights_latest(engine_result))
+        wts.append(_img_tag(b64_w, "Weights"))
+    wts.append("<h4 style='margin:8px 0 4px;'>Latest Weights</h4>")
+    wts.append(table_weights_latest(engine_result))
+    parts.append(_section("Portfolio Weights", "\n".join(wts)))
 
     # --- IC analysis ---
-    parts.append(_h3("IC Analysis"))
+    ic_parts: list[str] = []
     for method in ("absolute", "relative"):
         b64_ic = fig_ic(ic_results.get(method, pd.DataFrame()))
         if b64_ic:
-            parts.append(f"<p><strong>IC ({method})</strong></p>")
-            parts.append(_img_tag(b64_ic, f"IC {method}"))
+            ic_parts.append(f"<p><strong>IC ({method})</strong></p>")
+            ic_parts.append(_img_tag(b64_ic, f"IC {method}"))
         if ic_stats_results.get(method):
-            parts.append(table_ic_stats(ic_stats_results[method], method))
+            ic_parts.append(table_ic_stats(ic_stats_results[method], method))
+    parts.append(_section("IC Analysis", "\n".join(ic_parts)))
 
     # --- Score building-block decomposition ---
     if contributions:
-        parts.append(_h3("Score Building-Block Decomposition"))
+        decomp: list[str] = []
         b64_latest = fig_contributions_latest(contributions)
         if b64_latest:
-            parts.append("<p><strong>Latest Cross-Section</strong></p>")
-            parts.append(_img_tag(b64_latest, "Contributions Latest"))
+            decomp.append("<p><strong>Latest Cross-Section</strong></p>")
+            decomp.append(_img_tag(b64_latest, "Contributions Latest"))
 
         top_country = _top_country(engine_result, scores)
         if top_country is not None:
             b64_c = fig_contributions(contributions, top_country)
             if b64_c:
-                parts.append(
+                decomp.append(
                     f"<p><strong>Through Time — Top Holding "
                     f"({top_country})</strong></p>"
                 )
-                parts.append(_img_tag(b64_c, f"Contributions {top_country}"))
+                decomp.append(_img_tag(b64_c, f"Contributions {top_country}"))
+        parts.append(_section(
+            "Score Building-Block Decomposition", "\n".join(decomp)
+        ))
 
     # --- Validation scorecard ---
-    parts.append(_h3("Validation Scorecard"))
-    parts.append(scorecard_from_verdict(verdict))
+    parts.append(_section("Validation Scorecard", scorecard_from_verdict(verdict)))
 
     return "\n".join(parts)
 
@@ -390,27 +540,86 @@ def _top_country(engine_result, scores: pd.DataFrame) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Dashboard shell: segment tabs + strategy toggle (vanilla JS)
+# Dashboard shell: viewport-fit app frame, segment tabs + strategy toggle,
+# identifier (reference-universe) bar, collapsible-section JS (vanilla JS)
 # ---------------------------------------------------------------------------
 
 _DASH_CSS = _CSS + """
-.seg-tabs { display:flex; gap:6px; margin:16px 0 8px 0; }
-.seg-tab { font-size:1rem; font-weight:600; padding:8px 22px; cursor:pointer;
+/* --- Viewport-fit app shell: the PAGE never scrolls, only .dash-content --- */
+html, body { height:100vh; overflow:hidden; }
+body { display:flex; flex-direction:column; padding:10px 24px 0 24px; }
+.dash-header { flex:0 0 auto; }
+.dash-content { flex:1 1 auto; min-height:0; overflow-y:auto;
+                padding:0 2px 24px 0; }
+h1 { font-size:1.25rem; margin-bottom:8px; padding-bottom:6px; }
+/* --- Segment tabs + strategy toggle --- */
+.seg-tabs { display:flex; gap:6px; margin:4px 0 6px 0; }
+.seg-tab { font-size:0.95rem; font-weight:600; padding:6px 20px; cursor:pointer;
            border:1px solid #d1d5db; border-radius:6px 6px 0 0;
            background:#e5e7eb; color:#374151; }
 .seg-tab.active { background:#2563EB; color:#fff; border-color:#2563EB; }
-.strat-toggle { display:flex; gap:6px; margin:0 0 16px 0; }
-.strat-btn { font-size:0.88rem; padding:6px 16px; cursor:pointer;
+.strat-toggle { display:flex; gap:6px; margin:0 0 8px 0; }
+.strat-btn { font-size:0.85rem; padding:5px 14px; cursor:pointer;
              border:1px solid #d1d5db; border-radius:999px;
              background:#f3f4f6; color:#374151; }
 .strat-btn.active { background:#1e3a5f; color:#fff; border-color:#1e3a5f; }
 .pane { background:#fff; border:1px solid #e5e7eb; border-radius:0 6px 6px 6px;
-        padding:16px 20px; }
+        padding:12px 20px 16px; }
+/* --- Evidence-grade banner + per-gate chips --- */
+.banner { padding:8px 14px; border-radius:6px; margin:2px 0 10px 0; }
+.grade-certified { background:#d1fae5; border:1px solid #10b981; }
+.grade-power_limited { background:#fef3c7; border:1px solid #f59e0b; }
+.grade-weak { background:#f3f4f6; border:1px solid #9ca3af; }
+.grade-negative { background:#fee2e2; border:1px solid #ef4444; }
+.grade-line { font-size:1rem; font-weight:700; color:#111827; }
+.grade-note { font-size:0.78rem; color:#374151; margin:5px 0 0 0; }
+.gate-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.gate-chip { font-size:0.7rem; font-weight:600; padding:2px 8px;
+             border-radius:999px; white-space:nowrap; }
+.gate-chip small { font-weight:400; opacity:0.75; }
+.gate-pass { background:#d1fae5; color:#065f46; border:1px solid #10b981; }
+.gate-fail { background:#fee2e2; color:#991b1b; border:1px solid #ef4444; }
+.gate-amber { background:#fef3c7; color:#92400e; border:1px solid #f59e0b; }
+/* --- Dense stat-card grid (<= 2 rows at 1080p) --- */
+.cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(118px,1fr));
+         gap:6px; margin:0 0 10px 0; }
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:5px;
+        padding:4px 8px; }
+.card-label { font-size:0.62rem; color:#6b7280; white-space:nowrap; }
+.card-value { font-size:0.86rem; font-weight:600; color:#111827;
+              white-space:nowrap; }
+/* --- Collapsible sections (default collapsed) --- */
+.sec-toggle { display:block; width:100%; text-align:left; font-size:0.95rem;
+              font-weight:600; color:#1f2937; background:#eef2f7;
+              border:1px solid #d1d5db; border-radius:4px; padding:7px 12px;
+              margin:8px 0 4px 0; cursor:pointer; }
+.sec-toggle:hover { background:#e2e8f0; }
+.sec-toggle:focus-visible { outline:2px solid #2563EB; outline-offset:1px; }
+.sec-arrow { display:inline-block; width:1em; }
+.sec-body { padding:2px 4px 8px 4px; }
+/* --- Identifier bar + reference-universe panel --- */
+.id-bar { display:flex; align-items:center; gap:6px; margin:0 0 8px 0; }
+.id-label { font-size:0.78rem; color:#6b7280; }
+.id-btn { font-size:0.78rem; padding:4px 12px; cursor:pointer;
+          border:1px solid #d1d5db; border-radius:999px;
+          background:#f3f4f6; color:#374151; }
+.id-btn.active { background:#1e3a5f; color:#fff; border-color:#1e3a5f; }
+.idx-panel { background:#fff; border:1px solid #e5e7eb; border-radius:6px;
+             padding:8px 12px; margin:0 0 8px 0; max-height:30vh;
+             overflow-y:auto; }
+.idx-head { font-size:0.75rem; color:#6b7280; margin-bottom:6px; }
+.idx-meta { font-size:0.75rem; font-weight:600; color:#374151; margin:4px 0; }
+.idx-grid { display:grid; gap:2px 6px;
+            grid-template-columns:repeat(auto-fill,minmax(64px,1fr)); }
+.tk { font-size:0.68rem; font-family:Consolas,Menlo,monospace; color:#1f2937;
+      background:#f3f4f6; border-radius:3px; padding:1px 4px;
+      text-align:center; }
 """
 
 _DASH_JS = """
 var currentSeg = "%(default_seg)s";
 var currentStrat = "%(default_strat)s";
+var currentIdx = "";
 
 function _setActive(selector, attr, value) {
   var btns = document.querySelectorAll(selector);
@@ -444,7 +653,97 @@ function selectStrat(strat) {
   currentStrat = strat;
   showPane();
 }
+
+function toggleSec(btn) {
+  // Collapsible section header: flip body visibility + arrow + aria state.
+  var body = btn.nextElementSibling;
+  if (!body) { return; }
+  var open = body.style.display !== "none";
+  body.style.display = open ? "none" : "block";
+  btn.setAttribute("aria-expanded", open ? "false" : "true");
+  var arrow = btn.querySelector(".sec-arrow");
+  if (arrow) { arrow.textContent = open ? "\\u25B8" : "\\u25BE"; }
+}
+
+function toggleIdx(key) {
+  // Identifier buttons: show one reference universe at a time; re-click hides.
+  var panel = document.getElementById("idx-panel");
+  if (!panel) { return; }
+  var lists = document.querySelectorAll(".idx-list");
+  for (var i = 0; i < lists.length; i++) { lists[i].style.display = "none"; }
+  if (currentIdx === key) {
+    currentIdx = "";
+    panel.style.display = "none";
+  } else {
+    currentIdx = key;
+    panel.style.display = "block";
+    var el = document.getElementById("idx-" + key);
+    if (el) { el.style.display = "block"; }
+  }
+  _setActive(".id-btn", "data-idx", currentIdx);
+}
 """
+
+
+_IDX_KEYS = {"S&P 500": "sp500", "Nasdaq-100": "ndx", "Russell 1000": "r1000"}
+
+
+def _identifiers_bar() -> str:
+    """Identifier buttons + hidden reference-universe panel (display only).
+
+    Constituent snapshots come from
+    :mod:`country_rotation.reporting.index_constituents` (Wikipedia, see
+    module docstring). The platform trades countries, not stocks — these
+    ticker lists are reference context only. An index whose fetch failed at
+    snapshot time is labelled \"unavailable\" instead of fabricated.
+    """
+    from country_rotation.reporting.index_constituents import (
+        AS_OF,
+        CONSTITUENTS,
+    )
+
+    btns: list[str] = []
+    lists: list[str] = []
+    for name, key in _IDX_KEYS.items():
+        label = name.replace("&", "&amp;")
+        tickers = CONSTITUENTS.get(name) or []
+        btn_label = label if tickers else f"{label} (unavailable)"
+        btns.append(
+            f'<button class="id-btn" type="button" data-idx="{key}" '
+            f'onclick="toggleIdx(\'{key}\')">{btn_label}</button>'
+        )
+        if tickers:
+            body = (
+                f'<div class="idx-meta">{label} — {len(tickers)} tickers</div>'
+                '<div class="idx-grid">'
+                + "".join(f'<span class="tk">{t}</span>' for t in tickers)
+                + "</div>"
+            )
+        else:
+            body = (
+                f'<div class="idx-meta">{label}</div>'
+                "<p><em>Constituent list unavailable at snapshot time.</em></p>"
+            )
+        lists.append(
+            f'<div id="idx-{key}" class="idx-list" style="display:none">'
+            f"{body}</div>"
+        )
+
+    head = (
+        '<div class="idx-head">Reference universes (display only) — '
+        f"constituents as of {AS_OF} (source: Wikipedia; lists drift with "
+        "index rebalances). This platform trades countries, not single "
+        "stocks.</div>"
+    )
+    return (
+        '<div class="id-bar"><span class="id-label">Identifiers:</span>'
+        + "".join(btns)
+        + "</div>"
+        + f'<div id="idx-panel" class="idx-panel" style="display:none">'
+        + head
+        + "".join(lists)
+        + "</div>"
+    )
 
 
 def render_dashboard(
@@ -509,10 +808,15 @@ def render_dashboard(
     js = _DASH_JS % {"default_seg": default_seg, "default_strat": default_strat}
 
     body = (
+        '<header class="dash-header">'
         f"<h1>{title}</h1>"
         f'<div class="seg-tabs">{seg_tabs}</div>'
         f'<div class="strat-toggle">{strat_btns}</div>'
+        f"{_identifiers_bar()}"
+        "</header>"
+        '<main class="dash-content">'
         + "\n".join(panes)
+        + "</main>"
         + f"<script>{js}</script>"
     )
     return (

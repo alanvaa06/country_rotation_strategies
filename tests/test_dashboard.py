@@ -13,6 +13,12 @@ Tests
 4. test_strategy_lineup_cfgs          — script's strategy lineup builds the
                                         correct engine configs per key.
 5. test_script_help                   — scripts/build_dashboard.py --help.
+6. test_evidence_grade_tiers          — pure tier rules (4 tiers + edge cases).
+7. test_verdict_banner_*              — grade line + per-gate chips markup.
+8. test_pane_sections_collapsible     — sec-toggle buttons, default collapsed.
+9. test_index_constituents_module     — snapshot module sanity (counts, AS_OF).
+10. test_render_dashboard_identifiers — reference-universe panel markup.
+11. test_render_dashboard_viewport    — 100vh / overflow:hidden shell.
 """
 from __future__ import annotations
 
@@ -147,6 +153,140 @@ def _fake_verdict(overall: bool = False) -> dict:
     }
 
 
+def _em_cap_tilt_stats() -> dict:
+    """Real EM cap_tilt numbers (verdict_EM_prior_vm_p63_active_captilt_capbmk):
+    MC + walk-forward + stability pass, only the power gates (DSR/PSR/t/CI)
+    fail — the canonical 'power-limited' case certified by overfit forensics."""
+    return {
+        "sharpe_ann": 0.2917,
+        "sharpe_t_stat": 1.1759,
+        "psr": 0.8818,
+        "dsr": 0.7617,
+        "mc_p_value": 0.0297,
+        "wf_efficiency": 1.4489,
+        "frac_oos_positive": 0.8,
+        "bootstrap_ci": [-0.0078, 0.0434],
+        "nw_t_vs_eqw": 0.542,
+        "stability_frac_positive": 1.0,
+        "stability_default_zscore": 0.554,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Evidence grade: pure tier rules
+# ---------------------------------------------------------------------------
+
+def _grade_verdict(**stat_overrides) -> dict:
+    base = {
+        "sharpe_ann": 0.8, "sharpe_t_stat": 2.5, "psr": 0.97, "dsr": 0.96,
+        "mc_p_value": 0.01, "wf_efficiency": 0.9, "frac_oos_positive": 0.8,
+        "bootstrap_ci": [0.01, 0.05], "stability_frac_positive": 0.9,
+        "stability_default_zscore": 0.5,
+    }
+    base.update(stat_overrides)
+    return {"stats": base, "verdict": {"checks": {}, "overall": False}}
+
+
+def test_evidence_grade_tiers():
+    from country_rotation.reporting.dashboard import evidence_grade
+
+    # 1. CERTIFIED: every gate passes
+    g = evidence_grade(_grade_verdict())
+    assert g["tier"] == "certified"
+    assert g["label"] == "CERTIFIED"
+
+    # 2. POWER-LIMITED: MC + WF + OOS + stability pass, IR > 0, only the
+    #    power gates (DSR / PSR / t / CI) fail — real EM cap_tilt numbers.
+    g = evidence_grade({"stats": _em_cap_tilt_stats(), "verdict": {}})
+    assert g["tier"] == "power_limited"
+    assert "power-limited" in g["label"]
+    assert "NOT YET CERTIFIED" in g["label"]
+    assert "overfitting" in g["note"]
+
+    # 3. WEAK EVIDENCE: MC fails (IR still positive)
+    g = evidence_grade(_grade_verdict(mc_p_value=0.30, dsr=0.5))
+    assert g["tier"] == "weak"
+    # ... or walk-forward fails
+    g = evidence_grade(_grade_verdict(wf_efficiency=0.2))
+    assert g["tier"] == "weak"
+    # ... or positive IR with MC fail (not negative tier)
+    g = evidence_grade(_grade_verdict(sharpe_ann=0.3, mc_p_value=0.4, dsr=0.1))
+    assert g["tier"] == "weak"
+
+    # 4. NEGATIVE: IR <= 0 and MC fail
+    g = evidence_grade(_grade_verdict(sharpe_ann=-0.1, mc_p_value=0.4))
+    assert g["tier"] == "negative"
+    assert g["label"] == "NEGATIVE"
+
+
+def test_evidence_grade_edge_cases():
+    from country_rotation.reporting.dashboard import evidence_grade
+
+    # Missing stats entirely -> weak (cannot certify), no crash
+    g = evidence_grade({"stats": None, "verdict": {}})
+    assert g["tier"] == "weak"
+    assert g["gates"] == []
+
+    # NaN gate values fail their gate but never crash
+    g = evidence_grade(_grade_verdict(dsr=float("nan")))
+    assert g["tier"] == "power_limited"
+    dsr_gate = [x for x in g["gates"] if x["key"] == "dsr"][0]
+    assert dsr_gate["passed"] is False
+
+    # MC+WF pass but stability fails -> not power-limited
+    g = evidence_grade(_grade_verdict(stability_frac_positive=0.2, dsr=0.5))
+    assert g["tier"] == "weak"
+
+
+def test_evidence_grade_gates_structure():
+    from country_rotation.reporting.dashboard import evidence_grade
+
+    g = evidence_grade({"stats": _em_cap_tilt_stats(), "verdict": {}})
+    keys = [x["key"] for x in g["gates"]]
+    assert keys == [
+        "mc_p", "wf_eff", "oos_folds", "dsr", "psr", "active_t",
+        "ci_low", "stability",
+    ]
+    by_key = {x["key"]: x for x in g["gates"]}
+    assert by_key["mc_p"]["passed"] is True
+    assert by_key["wf_eff"]["passed"] is True
+    assert by_key["oos_folds"]["passed"] is True
+    assert by_key["stability"]["passed"] is True
+    for k in ("dsr", "psr", "active_t", "ci_low"):
+        assert by_key[k]["passed"] is False
+        assert by_key[k]["state"] == "amber"   # power-limited fails -> amber
+    assert by_key["mc_p"]["state"] == "pass"
+
+
+# ---------------------------------------------------------------------------
+# Verdict banner markup
+# ---------------------------------------------------------------------------
+
+def test_verdict_banner_power_limited_markup():
+    from country_rotation.reporting.dashboard import verdict_banner
+
+    html = verdict_banner({"stats": _em_cap_tilt_stats(), "verdict": {}})
+    assert "NOT YET CERTIFIED" in html and "power-limited" in html
+    assert "Overall Verdict" not in html
+    assert html.count('class="gate-chip ') == 8
+    assert "gate-amber" in html and "gate-pass" in html
+    # Chips show value + threshold
+    assert "0.030" in html        # MC p value
+    assert "0.05" in html         # MC threshold
+    assert "0.95" in html         # DSR/PSR threshold
+    # Plain-language tier note
+    assert "no overfitting signatures detected" in html
+
+
+def test_verdict_banner_negative_markup():
+    from country_rotation.reporting.dashboard import verdict_banner
+
+    html = verdict_banner(_grade_verdict(sharpe_ann=-0.2, mc_p_value=0.5))
+    assert "NEGATIVE" in html
+    assert "gate-fail" in html
+    assert "Overall Verdict" not in html
+
+
 # ---------------------------------------------------------------------------
 # Test 1: build_strategy_pane smoke (Equal weighting, no base_weights)
 # ---------------------------------------------------------------------------
@@ -170,10 +310,13 @@ def test_build_strategy_pane_smoke():
     n_images = html.count("data:image/png;base64,")
     assert n_images >= 4, f"Expected >=4 base64 images, got {n_images}"
 
-    # Verdict banner: overall FAIL + the three named checks
+    # Evidence-grade banner replaces the old FAIL-wall
+    assert "Overall Verdict: FAIL" not in html
+    assert 'class="gate-chip' in html
+    # Scorecard detail still carries FAIL cells + the three named checks
     assert "FAIL" in html
     for check in ("no_overfitting", "param_stable", "statistically_significant"):
-        assert check in html, f"check '{check}' missing from banner"
+        assert check in html, f"check '{check}' missing from scorecard"
 
     # Stat cards carry key validation numbers
     assert "PSR" in html and "DSR" in html
@@ -275,6 +418,106 @@ def test_render_dashboard_default_strategy_override():
     html = render_dashboard("T", segments, default_strategy="blend50")
     assert 'id="World-blend50" class="pane" style="display:block"' in html
     assert 'id="World-cap_tilt" class="pane" style="display:none"' in html
+
+
+# ---------------------------------------------------------------------------
+# Collapsible sections inside a pane
+# ---------------------------------------------------------------------------
+
+def test_pane_sections_collapsible():
+    from country_rotation.reporting.dashboard import build_strategy_pane
+
+    prices = _make_prices(400)
+    scores = _make_scores(prices)
+    cfg = _make_cfg()
+    verdict = _fake_verdict(overall=False)
+    contributions = _make_contributions(scores)
+
+    html = build_strategy_pane(scores, prices, cfg, None, verdict, contributions)
+
+    # 7 collapsible sections with contributions: Performance, Per-Year,
+    # Risk, Weights, IC, Score Decomposition, Scorecard.
+    n_toggles = html.count('<button class="sec-toggle"')
+    assert n_toggles == 7, f"expected 7 sec-toggle buttons, got {n_toggles}"
+    assert html.count('class="sec-body"') == n_toggles
+    # Default: ALL collapsed (display:none + aria-expanded=false)
+    assert html.count('aria-expanded="false"') == n_toggles
+    assert html.count('class="sec-body" style="display:none"') == n_toggles
+    # Banner + stat cards live OUTSIDE any collapsed body (always visible):
+    pre_sections = html.split('<button class="sec-toggle"')[0]
+    assert "banner" in pre_sections and 'class="cards"' in pre_sections
+
+    # Without contributions: 6 sections
+    html6 = build_strategy_pane(scores, prices, cfg, None, verdict, None)
+    assert html6.count('<button class="sec-toggle"') == 6
+
+
+# ---------------------------------------------------------------------------
+# Index constituents (identifiers) module + panel
+# ---------------------------------------------------------------------------
+
+def test_index_constituents_module():
+    import re
+
+    from country_rotation.reporting.index_constituents import (
+        AS_OF,
+        CONSTITUENTS,
+        SOURCE_URLS,
+    )
+
+    assert set(CONSTITUENTS) == {"S&P 500", "Nasdaq-100", "Russell 1000"}
+    assert len(CONSTITUENTS["S&P 500"]) >= 480
+    assert len(CONSTITUENTS["Nasdaq-100"]) >= 90
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", AS_OF)
+    assert set(SOURCE_URLS) == set(CONSTITUENTS)
+    assert all(
+        u.startswith("https://en.wikipedia.org/") for u in SOURCE_URLS.values()
+    )
+    # Tickers are compact uppercase identifiers, deduped
+    for name, tickers in CONSTITUENTS.items():
+        assert len(tickers) == len(set(tickers)), f"{name} has duplicates"
+        assert all(
+            re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,5}", t) for t in tickers
+        ), f"{name} has malformed tickers"
+
+
+def _tiny_segments() -> dict:
+    return {"World": {"cap_tilt": ("Cap-Tilt", "<p>pane</p>")}}
+
+
+def test_render_dashboard_identifiers_panel():
+    from country_rotation.reporting.dashboard import render_dashboard
+
+    html = render_dashboard("T", _tiny_segments())
+
+    assert "Reference universes (display only)" in html
+    for label in ("S&amp;P 500", "Nasdaq-100", "Russell 1000"):
+        assert label in html, f"identifier button '{label}' missing"
+    assert "toggleIdx" in html
+    assert 'id="idx-panel"' in html
+    assert "AAPL" in html            # constituent chips embedded
+    # As-of caveat propagated from the snapshot module
+    from country_rotation.reporting.index_constituents import AS_OF
+    assert AS_OF in html
+
+
+# ---------------------------------------------------------------------------
+# Viewport-fit shell
+# ---------------------------------------------------------------------------
+
+def test_render_dashboard_viewport_shell():
+    from country_rotation.reporting.dashboard import render_dashboard
+
+    html = render_dashboard("T", _tiny_segments())
+
+    # Page never scrolls; only the pane content area does.
+    assert "100vh" in html
+    assert "overflow:hidden" in html
+    assert "overflow-y:auto" in html
+    assert 'class="dash-header"' in html
+    assert 'class="dash-content"' in html
+    # Section toggle JS shipped with the shell
+    assert "toggleSec" in html
 
 
 # ---------------------------------------------------------------------------
