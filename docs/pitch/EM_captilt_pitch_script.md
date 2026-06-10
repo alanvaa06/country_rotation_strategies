@@ -168,7 +168,7 @@ We ran a dedicated forensic battery (`scripts/overfit_forensics.py`) instead of 
 ## §7. Implementation, governance, and the ask (4 min)
 
 ### 7.1 Production discipline (already running, not a promise)
-- One command (`python scripts/pipeline.py quarterly`) re-certifies, regenerates allocations, and rebuilds dashboards from the registry. Artifacts are **byte-deterministic** given the same inputs; every run carries the git commit + data-end stamp. 227 automated tests, including engine parity locks, leakage perturbation guards, and statistics verified against hand computations at 1e-12.
+- One command (`python scripts/pipeline.py quarterly`) re-certifies, regenerates allocations, and rebuilds dashboards from the registry. Artifacts are **byte-deterministic** given the same inputs; every run carries the git commit + data-end stamp. 233 automated tests, including engine parity locks, leakage perturbation guards, and statistics verified against hand computations at 1e-12.
 - Latest allocation (data end 2025-11-14, next rebalance 2026-02-11): China 38.8%, India 19.7%, Indonesia 7.2%, Brazil 6.7%, Mexico 5.6%, remainder in cap-weight base. Quarterly TCA artifact (turnover, cost layers, breakeven) ships with every run.
 
 ### 7.2 Pre-registered kill switch

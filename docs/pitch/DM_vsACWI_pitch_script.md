@@ -37,7 +37,7 @@
 - Levels are never factors (ratios/yields/changes only).
 - Forward-fill-only gap handling; look-ahead is *tested* by automated input-perturbation checks (perturb post-T data → outputs through T must be bit-identical), not asserted.
 - Publication lags configurable per metric; consensus panels are as-published (limitation, disclosed).
-- 227 automated tests, engine parity-locked to the validated legacy implementation; artifacts byte-deterministic.
+- 233 automated tests, engine parity-locked to the validated legacy implementation; artifacts byte-deterministic.
 
 ### 2.3 Exploration findings specific to DM
 - DM factor cross-section is *narrower* than EM: valuation/momentum spreads across DM countries are tighter, and per-factor ICs are lower (best prior-factor full-sample ICs in the deployed verdict: Momentum_6_1 +0.023, Momentum_12_1 +0.010, with valuation factors near zero to negative as standalone — only the blend carries information).
@@ -172,4 +172,4 @@ A: Largely, yes — that is what "composition bet" means and why it's priced as 
 A: That benchmark choice is load-bearing at the country-allocation level — segment composition effects rival selection alpha in magnitude. It's the same lesson as §4.3 from the opposite direction, and it's why every book in our registry declares its benchmark identity in the artifact manifest.
 
 **Q: Production readiness?**
-A: One command (`python scripts/pipeline.py quarterly`) re-certifies both registry strategies net-of-cost, produces allocations (latest: US 65.7%, HK 9.2%, NL 3.7%, CA 3.5%, UK 3.4% top-5; next rebalance 2026-02-11), TCA artifacts, and dashboards. Byte-deterministic, git-stamped, 227 tests. The runbook pre-registers the gate-reading and kill-switch protocol.
+A: One command (`python scripts/pipeline.py quarterly`) re-certifies both registry strategies net-of-cost, produces allocations (latest: US 65.7%, HK 9.2%, NL 3.7%, CA 3.5%, UK 3.4% top-5; next rebalance 2026-02-11), TCA artifacts, and dashboards. Byte-deterministic, git-stamped, 233 tests. The runbook pre-registers the gate-reading and kill-switch protocol.

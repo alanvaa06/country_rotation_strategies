@@ -60,6 +60,12 @@
 - [done] D2. DM pitch script -> docs/pitch/DM_vsACWI_pitch_script.md (built around the alpha-decomposition finding; composition-bet positioning + Q&A)
 - [done] RUNBOOK_quarterly_recert.md rewritten to current registry + pipeline.py + kill-switch monitors
 
+## Institutional repo polish (2026-06-10 PM)
+- [done] E1. scripts/export_readme_figures.py — pane-aware extraction of curated dashboard figures -> docs/figures/ (12 PNGs, visual QA); 6 TDD tests incl. layout-drift guard
+- [done] E2. README overhaul — badges, investment-process narrative with embedded figures (theory -> data -> signal -> IC -> Cap-Tilt -> backtest -> gates -> TCA), mermaid architecture, findings/deliverables links, scripts table
+- [done] E3. LICENSE file (MIT), .github/workflows/ci.yml (pytest, py 3.11/3.12, data-independent suite), pyproject hygiene (v1.0.0, author, URLs, requires-python >=3.10), __init__ version sync
+- [done] E4. Test-count sync across paper/pitches (233)
+
 ## Dashboard UX overhaul (2026-06-09)
 - [done] 1. Evidence-grade verdict banner (tier function + per-gate chips, replaces FAIL-wall)
 - [done] 2. Collapsible section sub-headers (default all collapsed, button toggles)
