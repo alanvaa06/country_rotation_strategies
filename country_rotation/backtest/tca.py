@@ -23,6 +23,7 @@ gross -> +spread/commission (charged on rebalance days)
 from __future__ import annotations
 
 import json
+import math
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,16 +138,40 @@ def _years_spanned(engine_result: EngineResult) -> float:
     return (idx[-1] - idx[0]).days / _CAL_DAYS_PER_YEAR
 
 
+def _fsum(values) -> float:
+    """Exactly-rounded sum (``math.fsum``), NaN-skipping like pandas.
+
+    numpy/pandas reductions use pairwise summation whose grouping can vary
+    with memory alignment, producing 1-ULP run-to-run jitter in scalars —
+    enough to break the byte-determinism contract of JSON artifacts derived
+    from them. fsum is exactly rounded, hence bit-stable.
+    """
+    arr = np.asarray(values, dtype=float)
+    return math.fsum(arr[np.isfinite(arr)])
+
+
+def _fmean_fstd(values) -> tuple[float, float]:
+    """Bit-stable (mean, sample std) via exactly-rounded sums."""
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    n = len(arr)
+    if n < 2:
+        return np.nan, np.nan
+    mean = math.fsum(arr) / n
+    var = math.fsum((arr - mean) ** 2) / (n - 1)
+    return mean, math.sqrt(var)
+
+
 def daily_ir(active_daily: pd.Series) -> float:
     """Annualized information ratio of a daily active-return series:
     ``mean / std * sqrt(252)``.  NaN on degenerate input."""
     clean = active_daily.dropna()
     if len(clean) < 2:
         return np.nan
-    std = float(clean.std())
+    mean, std = _fmean_fstd(clean)
     if std == 0.0 or not np.isfinite(std):
         return np.nan
-    return float(clean.mean() / std * np.sqrt(_TRADING_DAYS_PER_YEAR))
+    return float(mean / std * np.sqrt(_TRADING_DAYS_PER_YEAR))
 
 
 def _active_daily(engine_result: EngineResult) -> Optional[pd.Series]:
@@ -186,7 +211,13 @@ def turnover_analysis(
     per_rebalance = notional.sum(axis=1)
 
     years = _years_spanned(engine_result)
-    ann_turnover = float(per_rebalance.sum() / years) if years and years > 0 else np.nan
+    # round(…, 10): the engine's per-period turnover scalars carry 1-ULP
+    # run-to-run jitter (alignment-dependent numpy reductions; the engine is
+    # parity-locked so it cannot adopt fsum) — quantizing at 1e-10 makes the
+    # derived artifact scalars bit-stable while losing nothing economic.
+    ann_turnover = (
+        round(_fsum(per_rebalance) / years, 10) if years and years > 0 else np.nan
+    )
 
     held = weights.abs() > _TRADE_EPS
     flips = held.astype(int).diff()
@@ -286,10 +317,15 @@ def cost_decomposition(
 
     years = _years_spanned(engine_result)
     def _ann_bps(total_cost: float) -> float:
-        return float(total_cost / years * 1e4) if years and years > 0 else np.nan
+        # round(…, 10): bit-stability at the artifact boundary (see
+        # turnover_analysis).
+        return (
+            round(float(total_cost / years * 1e4), 10)
+            if years and years > 0 else np.nan
+        )
 
     mgmt_ann_bps = {
-        scenario: _ann_bps(float(drag.sum())) for scenario, drag in mgmt_drags.items()
+        scenario: _ann_bps(_fsum(drag)) for scenario, drag in mgmt_drags.items()
     }
 
     # ----- layered IRs on the ACTIVE daily curve -----------------------
@@ -321,9 +357,9 @@ def cost_decomposition(
     return CostReport(
         segment=segment,
         per_period=per_period,
-        spread_ann_bps=_ann_bps(float(spread_cost.sum())),
-        commission_ann_bps=_ann_bps(float(commission_cost.sum())),
-        expense_ann_bps=_ann_bps(float(expense_drag.sum())),
+        spread_ann_bps=_ann_bps(_fsum(spread_cost)),
+        commission_ann_bps=_ann_bps(_fsum(commission_cost)),
+        expense_ann_bps=_ann_bps(_fsum(expense_drag)),
         mgmt_ann_bps=MappingProxyType(mgmt_ann_bps),
         gross_ir=layer_irs["gross"],
         layer_irs=MappingProxyType(layer_irs),
@@ -346,8 +382,8 @@ def breakeven_cost(engine_result: EngineResult, base_ir_gross: float) -> float:
     active = _active_daily(engine_result)
     if active is None or len(active) < 2:
         raise ValueError("breakeven_cost requires daily return curves")
-    std_daily = float(active.std())
-    total_turnover = float(engine_result.period_results["turnover"].sum())
+    _, std_daily = _fmean_fstd(active)
+    total_turnover = _fsum(engine_result.period_results["turnover"])
     if not np.isfinite(base_ir_gross):
         raise ValueError("base_ir_gross must be finite")
     if std_daily <= 0.0 or total_turnover <= 0.0:
@@ -358,4 +394,7 @@ def breakeven_cost(engine_result: EngineResult, base_ir_gross: float) -> float:
         * np.sqrt(_TRADING_DAYS_PER_YEAR)
         / (len(active) * std_daily * 1e4)
     )
-    return float(base_ir_gross / slope_per_bp)
+    # round(…, 10): engine period turnover carries 1-ULP run-to-run jitter
+    # (alignment-dependent reductions in the parity-locked engine);
+    # quantizing keeps the artifact byte-deterministic.
+    return round(float(base_ir_gross / slope_per_bp), 10)
