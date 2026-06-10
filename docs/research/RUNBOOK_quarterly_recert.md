@@ -47,9 +47,11 @@ mechanically (certified / power-limited / weak / negative).
 4. **DM book only:** re-run the alpha decomposition (`python scripts/overfit_forensics.py --segment DM --bmk-index World`) — if the selection leg turns *significantly* negative, the overlay is paying for nothing.
 
 ### Regime context for monitor 1 (RoRo, advisory — never a trading trigger)
-Read the rolling-IR signal **conditional on the RoRo regime** (external model,
-outputs copied to `RoRo/`: `regimes_jm.csv` is the persistent jump-model
-classifier; segment labels `EM_Eq` / `DM_Eq`; labels are causal/no-lookahead).
+Read the rolling-IR signal **conditional on the RoRo regime**. RoRo data is
+NOT stored in this repo (stripped 2026-06-10 after the research concluded);
+pull fresh outputs from the external model repo (`C:\Proyectos\RoRo`,
+`regimes_jm.csv` = the persistent jump-model classifier; segment labels
+`EM_Eq` / `DM_Eq`; labels are causal/no-lookahead).
 Interpretation is PER BOOK — the 2010–2025 regime-conditioned attribution
 (2026-06-10 diagnostic) found opposite patterns:
 
@@ -66,7 +68,12 @@ transitional concentration is **EM-specific** — World passed only
 directionally (t 0.39, null p 0.67), DM failed, HMM flips both; note the
 sibling books carry ~zero selection alpha to distribute, so the test had
 limited discriminating power. Do NOT extend the transitional-mix
-interpretation beyond the EM book. This section is diagnostic only; any *trading*
+interpretation beyond the EM book. Full evidence trail: specs
+`spec_regime_overlay_tests_2026-06-10.md`,
+`spec_regime_quarterly_sampling_2026-06-10.md`,
+`spec_regime_replication_2026-06-10.md`; results in
+`docs/context/results.md` [R1]–[R5]. Verdict: RoRo is a gauge, never a
+signal — 4 pre-registered trials, 0 tradeable rules. This section is diagnostic only; any *trading*
 use of regimes requires its own pre-registered spec and a trial-ledger entry
 first. Diagnostic script: outputs/research/_regime_attribution.py (re-run
 after each Inputs/ + RoRo refresh).

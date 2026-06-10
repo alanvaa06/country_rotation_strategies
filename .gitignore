@@ -104,3 +104,6 @@ performance_metrics*.xlsx
 
 
 
+
+# External RoRo regime model outputs (research concluded 2026-06-10; data lives in C:\Proyectos\RoRo)
+RoRo/
