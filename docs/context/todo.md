@@ -38,6 +38,9 @@
 - [done] Multi-strategy toggle dashboard — reporting/dashboard.py (build_strategy_pane + render_dashboard, segment tabs World/DM/EM + strategy toggle, default Cap_Tilt) + scripts/build_dashboard.py (9 panes, one self-contained HTML); 6 TDD tests
 - [done] Engine 'top_n_level' selection (canonical AMP-2013 rank-of-level, all weighting branches incl. Cap_Tilt) + pre-registered 6-spec signal tournament (scripts/spec_tournament.py: screen-window IC + BH-FDR + one-shot lockbox); winners World/DM = S5_amp_ey_change (q .019/.093), EM = S1 (not significant); 145 tests green
 - [done] Winner scorecard runs + verdict — research_run.py `--signal amp_ey` (S5 tournament winner, requires --track prior, tag `_S5`); 4 full runs World/DM x cap_tilt/eqw-active @63d vs cap index: ALL FAIL (0/3 checks) — S5 improves composite IC rel (World +0.0705 t 2.56; DM +0.0576 t 1.63) but realized IR is negative everywhere (World cap_tilt -0.26, DM cap_tilt -0.24); old vm blend remains the better traded book; no certification
+- [done] ACWI sole-benchmark evaluation — research_run.py `--bmk-index World` (verified ACWI-equivalent: 0.887 DM + 0.111 EM, residual TE 0.14%/yr; overrides --bmk-source, tag `_vsWorld`) + 6 full runs World/DM/EM x cap_tilt/eqw-active vm @63 vs ACWI: best = DM cap_tilt (IR +0.30, MC p .040, param_stable PASS, TE 2.1%, beta 0.98); EM flips negative vs ACWI; no certification; 154 tests green
+- [pending] ACWI dashboard section + toggle persistence
+- [pending] ACWI winner forensics + verdict doc
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)
 
 ## Dashboard UX overhaul (2026-06-09)

@@ -40,13 +40,19 @@ cap-weighted aggregate is not constructible from the inputs (no investable
 country weights); the raw ``Price.xlsx`` index columns (``World``/``DM``/
 ``EM``) are external index levels that fall outside the classified universe
 and are intentionally replaced so the benchmark matches the equal-weight
-buy-and-hold null used inside the validation suite.
+buy-and-hold null used inside the validation suite.  ``--bmk-source index``
+swaps in the vendor cap-weighted segment index column instead, and
+``--bmk-index NAME`` pins a single cross-segment vendor index (e.g.
+``World``, the verified ACWI-equivalent: 0.887 DM + 0.111 EM, 0.14%/yr
+residual TE) as the benchmark for ANY segment book — it overrides
+``--bmk-source``.
 
 Usage
 -----
     python scripts/research_run.py --segment World [--track screen|prior]
         [--quick] [--periodicity 63] [--fdr-q 0.10]
         [--construction eqw|cap_tilt] [--signal blend|amp_ey]
+        [--bmk-index World]
 
 ``--signal amp_ey`` swaps the composite for the S5_amp_ey_change tournament
 winner (scripts/spec_tournament.py): 0.5*relative_rank(Momentum_12_1) +
@@ -58,8 +64,9 @@ pre-registered tournament), so it requires ``--track prior``.
 ``--construction cap_tilt`` switches the portfolio construction from the
 default equal-weight top-N sleeve to the benchmark-aware Cap_Tilt book
 (cap-weight base from the ``Market_Cap`` input, +/- ``active_share`` score
-tilts).  It is the investable-mandate construction, so it requires
-``--bmk-source index`` and ``--mode active``.
+tilts).  It is the investable-mandate construction, so it requires a vendor
+index benchmark (``--bmk-source index`` OR ``--bmk-index NAME``) and
+``--mode active``.
 
 Note: requires local data (``Inputs/``, ``Classification.xlsx``) which is
 gitignored — present on the research machine only.
@@ -576,6 +583,7 @@ def build_verdict_payload(
             "signal": getattr(args, "signal", "blend"),
             "basis": args.basis,
             "bmk_source": getattr(args, "bmk_source", "eqw"),
+            "bmk_index": getattr(args, "bmk_index", None),
             "mode": getattr(args, "mode", "active"),
             "bmk_weight": getattr(args, "bmk_weight", 0.0),
             "construction": construction,
@@ -703,6 +711,14 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
              "benchmark, e.g. MSCI-style DM/EM/World).",
     )
     parser.add_argument(
+        "--bmk-index", default=None, dest="bmk_index", metavar="NAME",
+        help="Vendor index column from the Price input to use as THE "
+             "benchmark regardless of segment (e.g. 'World' = ACWI-"
+             "equivalent: regression vs DM+EM gives 0.887/0.111 weights, "
+             "residual TE 0.14%%/yr). Overrides --bmk-source. The book stays "
+             "the segment universe; only the measuring stick changes.",
+    )
+    parser.add_argument(
         "--mode", choices=("active", "blend"), default="active",
         help="Engine mode: 'active' (default) = 100%% selection sleeve, "
              "benchmark used for comparison only; 'blend' = core-satellite "
@@ -731,13 +747,15 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         )
 
     if args.construction == "cap_tilt" and (
-        args.bmk_source != "index" or args.mode != "active"
+        (args.bmk_source != "index" and args.bmk_index is None)
+        or args.mode != "active"
     ):
         raise SystemExit(
             "[research_run] ERROR: --construction cap_tilt is the "
-            "benchmark-aware mandate construction — it requires "
-            "--bmk-source index and --mode active "
-            f"(got bmk_source='{args.bmk_source}', mode='{args.mode}')."
+            "benchmark-aware mandate construction — it requires a vendor "
+            "index benchmark (--bmk-source index OR --bmk-index NAME) and "
+            f"--mode active (got bmk_source='{args.bmk_source}', "
+            f"bmk_index={args.bmk_index!r}, mode='{args.mode}')."
         )
 
     t0 = time.time()
@@ -772,7 +790,31 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
 
     prices = price_df[universe].copy()
     prices_with_bmk = prices.copy()
-    if args.bmk_source == "index":
+    # Benchmark column name: the cross-segment vendor index when --bmk-index
+    # is set (e.g. 'World' as ACWI proxy for a DM or EM book), else the
+    # segment name (both --bmk-source branches). The universe holds country
+    # columns only (Region pseudo-rows are excluded upstream), so the
+    # benchmark column never collides with a book asset.
+    bmk_col = args.bmk_index or args.segment
+    if args.bmk_index is not None:
+        # Cross-segment vendor index benchmark. 'World' is the verified
+        # ACWI-equivalent: regression vs DM+EM gives 0.887/0.111 weights
+        # with 0.14%/yr residual TE — MSCI ACWI's ~88/12 split. Overrides
+        # --bmk-source; the book is unchanged, only the measuring stick.
+        if args.bmk_index not in price_df.columns:
+            raise SystemExit(
+                f"[research_run] ERROR: --bmk-index requires a "
+                f"'{args.bmk_index}' index column in the Price input "
+                f"(columns available: vendor index levels carried outside "
+                f"the country universe)."
+            )
+        prices_with_bmk[bmk_col] = price_df[args.bmk_index]
+        _log(
+            f"Benchmark: vendor index column '{args.bmk_index}'"
+            + (" (ACWI)" if args.bmk_index == "World" else "")
+            + " — overrides --bmk-source."
+        )
+    elif args.bmk_source == "index":
         # Vendor cap-weighted segment index level (e.g. MSCI-style 'DM'
         # column carried in the raw Price file) — the investable mandate
         # benchmark. Verified cap-weight signature: corr(DM, US) ~ 0.94
@@ -782,10 +824,10 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
                 f"[research_run] ERROR: --bmk-source index requires a "
                 f"'{args.segment}' index column in the Price input."
             )
-        prices_with_bmk[args.segment] = price_df[args.segment]
+        prices_with_bmk[bmk_col] = price_df[args.segment]
         _log(f"Benchmark: vendor cap-weighted '{args.segment}' index column.")
     else:
-        prices_with_bmk[args.segment] = equal_weight_index(prices)
+        prices_with_bmk[bmk_col] = equal_weight_index(prices)
         _log(f"Benchmark: synthetic equal-weight '{args.segment}' universe.")
 
     # Cap_Tilt base weights: cap-weight share of each universe country,
@@ -816,7 +858,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
 
     cfg_bt = dataclasses.replace(
         cfg.backtest,
-        bmk=args.segment,
+        bmk=bmk_col,
         bmk_weight=args.bmk_weight,
         mode=args.mode,
         periodicity=args.periodicity,
@@ -854,7 +896,9 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         tag += "_S5"
     if args.construction == "cap_tilt":
         tag += "_captilt"
-    if args.bmk_source == "index":
+    if args.bmk_index is not None:
+        tag += f"_vs{args.bmk_index}"
+    elif args.bmk_source == "index":
         tag += "_capbmk"
     if args.mode == "blend":
         tag += f"_blend{int(round(args.bmk_weight * 100))}"
