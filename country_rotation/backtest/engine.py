@@ -33,6 +33,15 @@ a single process:
 * Returns (~668-724): simple price return ``d_sel -> d_ret`` per asset
   (0.0 on NaN/zero start); portfolio return = dict-ordered dot product;
   ``net = gross - turnover * tc_bps/10000``.
+* Per-country costs (additive, NOT legacy): when ``cost_bps`` is given,
+  ``cost = sum_i traded_notional_i * bps_i / 1e4`` where the traded
+  notional follows the legacy turnover decomposition exactly — first
+  period = full deployment ``w_i`` (no halving), afterwards
+  ``|dw_i| / 2``, changes <= 1e-6 ignored, benchmark excluded.  Reduces
+  EXACTLY to the flat formula when every ``bps_i`` equals the flat rate;
+  countries missing from ``cost_bps`` fall back to
+  ``cfg.transaction_cost_bps``.  ``cost_bps=None`` -> flat legacy path,
+  byte-identical (parity).
 * ``active_return = gross - bmk_return`` — legacy line ~229 uses GROSS,
   not net.  Replicated as-is for parity.
 * Daily curve (~833-887): period weights mapped back to ``d_sel``,
@@ -116,6 +125,7 @@ class Engine:
         prices: pd.DataFrame,
         cfg: BacktestConfig,
         base_weights: pd.DataFrame | None = None,
+        cost_bps: pd.Series | None = None,
     ) -> None:
         self.normalized_score = normalized_score.copy()
         self.prices = prices.copy()
@@ -123,6 +133,20 @@ class Engine:
         self.selection_criteria = cfg.selection_criteria.lower()
         self.bmk = cfg.bmk
         self.transaction_cost_decimal = cfg.transaction_cost_bps / 10000.0
+        # Optional per-country ONE-WAY trading cost in bps (index = country
+        # names).  None -> flat cfg.transaction_cost_bps (legacy parity).
+        if cost_bps is not None and not isinstance(cost_bps, pd.Series):
+            raise TypeError("cost_bps must be a pandas Series or None")
+        self.cost_bps = cost_bps.copy() if cost_bps is not None else None
+        self._cost_rate_by_country: dict = (
+            {
+                country: float(bps) / 10000.0
+                for country, bps in self.cost_bps.items()
+                if pd.notna(bps)
+            }
+            if self.cost_bps is not None
+            else {}
+        )
         # Cap_Tilt only: dates x countries cap-weight base (rows ~sum to 1).
         self.base_weights = (
             base_weights.sort_index().copy() if base_weights is not None else None
@@ -465,6 +489,27 @@ class Engine:
             "trades": weight_changes,
         }
 
+    def _transaction_cost(self, turnover_result: dict, first_period: bool) -> float:
+        """Period transaction cost.
+
+        Flat path (``cost_bps is None``): legacy ``turnover * bps/1e4``,
+        byte-identical.  Vector path: each country's traded notional is
+        charged its own one-way rate — ``sum_i notional_i * bps_i/1e4`` with
+        ``notional_i = w_i`` on first deployment (legacy turnover counts the
+        full sleeve once) and ``|dw_i|/2`` afterwards.  Missing countries
+        fall back to the flat rate, so the vector path reduces exactly to
+        the flat formula when every rate equals ``cfg.transaction_cost_bps``.
+        """
+        if self.cost_bps is None:
+            return turnover_result["turnover"] * self.transaction_cost_decimal
+
+        cost = 0.0
+        for country, trade in turnover_result["trades"].items():
+            rate = self._cost_rate_by_country.get(country, self.transaction_cost_decimal)
+            notional = abs(trade) if first_period else abs(trade) / 2.0
+            cost += notional * rate
+        return cost
+
     def _calculate_period_returns(self, d_sel, d_ret) -> dict:
         """Legacy ``_calculate_period_returns`` (~668-700)."""
         if d_sel not in self.prices.index or d_ret not in self.prices.index:
@@ -561,9 +606,10 @@ class Engine:
                 else:  # 'active': no benchmark row, bmk_weight ignored.
                     weights = dict(active_weights)
 
+            first_period = len(previous_weights) == 0
             turnover_result = self._calculate_turnover(weights, previous_weights)
             turnover = turnover_result["turnover"]
-            transaction_cost = turnover * self.transaction_cost_decimal
+            transaction_cost = self._transaction_cost(turnover_result, first_period)
 
             period_returns = self._calculate_period_returns(d_sel, d_ret)
             portfolio_return_gross = self._calculate_portfolio_return(weights, period_returns)
