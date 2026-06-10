@@ -33,5 +33,6 @@
 - [done] Performance abs/rel, risk abs/rel, IC analysis, score building-block decomposition
 
 ## Phase 7 — Strategy Selection
-- [pending] Explore dataset, select profitable strategy per EM / DM / World
+- [in_progress] Explore dataset, select profitable strategy per EM / DM / World — research driver (scripts/research_run.py) done; World @63d screen kept 0/45 (FDR-binding); DM/EM runs + screening-policy decision pending
 - [pending] Evidence-based verdict with statistical certification
+- [pending] DECISION NEEDED: BH-FDR family definition (45-factor family kills everything at q=0.10; per-category families / fdr_q / horizon are the levers)

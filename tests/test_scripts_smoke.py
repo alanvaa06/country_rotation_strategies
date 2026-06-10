@@ -109,6 +109,101 @@ def test_run_backtest_smoke(tmp_path):
 # build_scores.py — full path: Inputs/ + Classification.xlsx → scores xlsx
 # ---------------------------------------------------------------------------
 
+def _write_classification(path: Path) -> None:
+    """Classification fixture incl. Region pseudo-rows (mirrors real sheet)."""
+    classification = pd.DataFrame(
+        {
+            "Segment": ["DM"] * 5 + ["EM"] * 5 + ["Region"] * 2,
+            "Region": (["Europe", "Europe", "Asia", "Asia", "LatAm"] * 2)
+            + ["Region"] * 2,
+            "Type": ["Country"] * 10 + ["Region"] * 2,
+        },
+        index=pd.Index([*_COUNTRIES, "World", "EM"], name="Country"),
+    )
+    classification.to_excel(path, sheet_name="regiones")
+
+
+def test_research_run_smoke(tmp_path):
+    """Full research pipeline on engineered fixtures: a persistent value
+    signal (low PE <-> high future drift) must survive screening so the
+    composite -> validation -> report -> verdict path is exercised."""
+    n_days = 600
+    idx = pd.bdate_range("2020-01-01", periods=n_days)
+    rng = np.random.default_rng(7)
+
+    inputs_dir = tmp_path / "Inputs"
+    inputs_dir.mkdir()
+
+    # Prices: persistent, well-separated drifts; low noise.
+    drifts = np.linspace(-0.003, 0.003, len(_COUNTRIES))
+    prices = pd.DataFrame(
+        {
+            name: 100.0 * np.cumprod(1.0 + rng.normal(drifts[k], 0.006, n_days))
+            for k, name in enumerate(_COUNTRIES)
+        },
+        index=idx,
+    )
+    _write_inputs_xlsx(prices, inputs_dir / "Price.xlsx")
+
+    # PE inversely tied to drift: best-drift country has the lowest PE,
+    # so the (direction = -1) PE factor is strongly predictive.
+    pe_levels = 30.0 - 2.0 * np.argsort(np.argsort(drifts))
+    pe = pd.DataFrame(
+        pe_levels + rng.normal(0.0, 0.3, (n_days, len(_COUNTRIES))),
+        index=idx, columns=_COUNTRIES,
+    )
+    _write_inputs_xlsx(pe, inputs_dir / "PE.xlsx")
+
+    # Ten_Year: flat 2% everywhere (adds the spread factor).
+    ten_year = pd.DataFrame(
+        2.0 + rng.normal(0.0, 0.05, (n_days, len(_COUNTRIES))),
+        index=idx, columns=_COUNTRIES,
+    )
+    _write_inputs_xlsx(ten_year, inputs_dir / "Ten_Year.xlsx")
+
+    cls_path = tmp_path / "Classification.xlsx"
+    _write_classification(cls_path)
+
+    cfg = json.loads(
+        (REPO_ROOT / "configs" / "default.json").read_text(encoding="utf-8")
+    )
+    cfg["data"]["inputs_folder"] = str(inputs_dir)
+    cfg["data"]["classification_file"] = str(cls_path)
+    cfg["data"]["target_date"] = "2020-01-01"
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+    out_dir = tmp_path / "research"
+    out = _run(
+        [
+            "scripts/research_run.py",
+            "--segment", "World",
+            "--config", str(cfg_path),
+            "--output-dir", str(out_dir),
+            "--periodicity", "21",
+            "--quick",
+        ]
+    )
+
+    assert out.returncode == 0, f"stdout:\n{out.stdout}\nstderr:\n{out.stderr}"
+
+    # Screening evidence + verdict are always written
+    assert (out_dir / "screening_World.xlsx").exists()
+    verdict = json.loads(
+        (out_dir / "verdict_World.json").read_text(encoding="utf-8")
+    )
+    assert verdict["segment"] == "World"
+    assert verdict["n_countries"] == 10  # Region pseudo-rows excluded
+    assert isinstance(verdict["verdict"]["overall"], bool)
+
+    # The engineered value signal must survive -> full pipeline ran
+    kept = verdict["screening"]["kept"]
+    assert "PE" in kept, f"engineered PE signal not kept; kept={kept}"
+    assert verdict["stats"] is not None
+    assert verdict["stats"]["sharpe_ann"] is not None
+    assert (out_dir / "report_World.html").exists()
+
+
 def test_build_scores_smoke(tmp_path):
     idx = pd.bdate_range("2020-01-01", periods=_N_DAYS)
     rng = np.random.default_rng(2)

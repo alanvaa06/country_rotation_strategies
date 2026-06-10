@@ -18,3 +18,4 @@
 - [2026-06-09]: B3 complete — selection/walkforward.py (BH-FDR screening on anchored fold ICs, HLZ weak labels, lockbox verification); 6 TDD tests incl. definitive lockbox-scramble no-peek test; 109/109 green; commit 1a67e94 on dev.
 - [2026-06-09]: B4 complete — validation/scorecard.py (Thresholds, Verdict, ValidationReport, compute_validation); min_mean_ic gate added to screen_factors; 5 new TDD tests; 114/114 green; committed 70dc298 + pushed to origin/dev.
 - [2026-06-09]: C1 complete — reporting/report.py (8 figure functions, 5 table builders, render_html, build_report orchestrator; Agg backend, base64 PNG embed) + scripts/build_report.py CLI; 3 TDD tests; 117/117 green.
+- [2026-06-09]: D1 complete — scripts/research_run.py per-segment research driver + end-to-end smoke test; 118/118 green; World --quick @63d real-data run: 0/45 factors survive BH-FDR screen (honest negative verdict, evidence in outputs/research/); pushed to origin/dev.
