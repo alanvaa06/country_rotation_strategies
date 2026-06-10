@@ -1,0 +1,13 @@
+{
+  "as_of": "2026-06-10",
+  "doc": "Conservative country-ETF implementation cost assumptions. one_way_spread_bps = half bid-ask spread + commission for the liquid US-listed country ETF (public iShares/Vanguard data, conservative mid-points). expense_ratio_bps = annual ETF holding cost. mgmt_fee_scenarios_bps = strategy-level annual fee tiers for net-of-fee reporting.",
+  "commission_bps": 1.0,
+  "tiers": {
+    "dm_tier1": {"one_way_spread_bps": 5,  "countries": ["United States","Japan","United Kingdom","Germany","France","Canada","Switzerland","Australia","Netherlands"]},
+    "dm_tier2": {"one_way_spread_bps": 10, "countries": ["Sweden","Spain","Italy","Hong Kong","Singapore","Denmark","Finland","Belgium","Norway","Ireland","Israel"]},
+    "em_tier1": {"one_way_spread_bps": 12, "countries": ["China","India","Taiwan","South Korea","Brazil","Mexico","South Africa"]},
+    "em_tier2": {"one_way_spread_bps": 25, "countries": ["Indonesia","Thailand","Malaysia","Poland","Chile","Peru","Colombia"]}
+  },
+  "expense_ratio_bps": {"DM": 50, "EM": 65, "World": 55},
+  "mgmt_fee_scenarios_bps": [0, 50]
+}

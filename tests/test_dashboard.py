@@ -15,9 +15,14 @@ Tests
 5. test_script_help                   — scripts/build_dashboard.py --help.
 6. test_evidence_grade_tiers          — pure tier rules (4 tiers + edge cases).
 7. test_verdict_banner_*              — grade line + per-gate chips markup.
-8. test_pane_sections_collapsible     — sec-toggle buttons, default collapsed.
+8. test_pane_sections_collapsible     — sec-toggle buttons, default collapsed,
+                                        sec-title spans (state keys).
 9. test_render_dashboard_has_no_identifiers_bar — feature removed by request.
 10. test_render_dashboard_viewport    — 100vh / overflow:hidden shell.
+11. test_pane_acwi_section            — optional "vs ACWI (sole benchmark)"
+                                        section from the ACWI-relative verdict.
+12. test_section_toggle_persistence_js — openSecs/applySecState shell JS:
+                                        section state survives pane switches.
 """
 from __future__ import annotations
 
@@ -150,6 +155,25 @@ def _fake_verdict(overall: bool = False) -> dict:
             },
         },
     }
+
+
+def _fake_acwi_verdict() -> dict:
+    """ACWI-relative verdict (vendor World index as sole benchmark) with
+    distinctive numbers so pane assertions can't match the segment verdict."""
+    v = _fake_verdict(overall=False)
+    v["bmk_index"] = "World"
+    v["stats"] = dict(
+        v["stats"],
+        sharpe_ann=0.4321,
+        sharpe_t_stat=1.7654,
+        mc_p_value=0.0123,
+        dsr=0.9012,
+        bootstrap_ci=[-0.0111, 0.0555],
+    )
+    v["mandate_stats"] = dict(
+        v["mandate_stats"], tracking_error=0.0567, beta=0.9123,
+    )
+    return v
 
 
 def _em_cap_tilt_stats() -> dict:
@@ -442,6 +466,8 @@ def test_pane_sections_collapsible():
     # Default: ALL collapsed (display:none + aria-expanded=false)
     assert html.count('aria-expanded="false"') == n_toggles
     assert html.count('class="sec-body" style="display:none"') == n_toggles
+    # Every section header carries a sec-title span (JS state key)
+    assert html.count('<span class="sec-title">') == n_toggles
     # Banner + stat cards live OUTSIDE any collapsed body (always visible):
     pre_sections = html.split('<button class="sec-toggle"')[0]
     assert "banner" in pre_sections and 'class="cards"' in pre_sections
@@ -449,6 +475,128 @@ def test_pane_sections_collapsible():
     # Without contributions: 6 sections
     html6 = build_strategy_pane(scores, prices, cfg, None, verdict, None)
     assert html6.count('<button class="sec-toggle"') == 6
+
+
+# ---------------------------------------------------------------------------
+# Transaction Costs & Turnover section (optional cost_model)
+# ---------------------------------------------------------------------------
+
+def _make_cost_model(countries) -> object:
+    from country_rotation.backtest.tca import CostModel
+
+    return CostModel(
+        as_of="2026-06-10",
+        commission_bps=1.0,
+        spread_bps_by_country={c: 9.0 for c in countries},
+        max_spread_bps=9.0,
+        expense_ratio_bps={"DM": 50.0, "EM": 65.0, "World": 55.0},
+        mgmt_fee_scenarios_bps=(0.0, 50.0),
+    )
+
+
+def test_pane_tca_section_with_cost_model():
+    """cost_model -> 'Transaction Costs & Turnover' section: 3 TCA figures,
+    layer table (ann bps + IR) and a breakeven callout chip."""
+    from country_rotation.reporting.dashboard import build_strategy_pane
+
+    prices = _make_prices(400)
+    scores = _make_scores(prices)
+    cfg = _make_cfg()
+    verdict = _fake_verdict(overall=False)
+    contributions = _make_contributions(scores)
+    cost_model = _make_cost_model(scores.columns)
+
+    base = build_strategy_pane(scores, prices, cfg, None, verdict,
+                               contributions)
+    html = build_strategy_pane(scores, prices, cfg, None, verdict,
+                               contributions, cost_model=cost_model)
+
+    # One extra collapsible section (8 with contributions)
+    assert html.count('<button class="sec-toggle"') == 8
+    assert "Transaction Costs &amp; Turnover" in html
+    # 3 extra figures: turnover bars, cost-layer waterfall, net cumulative
+    extra = html.count("data:image/png;base64,") - base.count(
+        "data:image/png;base64,")
+    assert extra == 3, f"expected 3 extra TCA figures, got {extra}"
+
+    tca_body = html.split("Transaction Costs &amp; Turnover")[1]
+    # Layer table: cumulative layers with annualized bps + IR columns
+    for label in ("Gross active", "Spread + commission", "ETF expense",
+                  "Mgmt fee 50"):
+        assert label in tca_body, f"missing layer row '{label}'"
+    assert "Ann. cost (bps)" in tca_body and "Cumulative IR" in tca_body
+    # Breakeven callout chip
+    assert 'class="breakeven-chip"' in tca_body
+    assert "Breakeven" in tca_body
+
+    # No cost model -> section absent (pane unchanged)
+    assert "Transaction Costs" not in base
+    assert base.count('<button class="sec-toggle"') == 7
+
+
+# ---------------------------------------------------------------------------
+# Benchmark-identity badge + "vs ACWI (sole benchmark)" section
+# ---------------------------------------------------------------------------
+
+def test_pane_benchmark_badge():
+    from country_rotation.reporting.dashboard import build_strategy_pane
+
+    prices = _make_prices(300)
+    scores = _make_scores(prices)
+    cfg = _make_cfg()
+    verdict = _fake_verdict(overall=False)
+
+    label = "Vendor <em>EM</em> index — <strong>MSCI EM equivalent</strong>"
+    html = build_strategy_pane(
+        scores, prices, cfg, None, verdict, None, bmk_label=label
+    )
+    assert 'class="bmk-badge"' in html
+    assert "MSCI EM equivalent" in html
+
+    # No label -> no badge
+    html2 = build_strategy_pane(scores, prices, cfg, None, verdict, None)
+    assert "bmk-badge" not in html2
+
+
+def test_pane_acwi_section():
+    from country_rotation.reporting.dashboard import build_strategy_pane
+
+    prices = _make_prices(400)
+    scores = _make_scores(prices)
+    cfg = _make_cfg()
+    verdict = _fake_verdict(overall=False)
+    contributions = _make_contributions(scores)
+    acwi = _fake_acwi_verdict()
+
+    html = build_strategy_pane(
+        scores, prices, cfg, None, verdict, contributions, acwi_verdict=acwi
+    )
+
+    # One extra collapsible section (8 with contributions), default collapsed
+    assert html.count('<button class="sec-toggle"') == 8
+    assert "vs ACWI (sole benchmark)" in html
+    # Section body: evidence grade + chips + ACWI stat cards + provenance note
+    acwi_body = html.split("vs ACWI (sole benchmark)")[1]
+    assert "acwi-grade" in acwi_body
+    assert 'class="gate-chip' in acwi_body
+    assert "0.43" in acwi_body        # IR (active, ann.) vs ACWI (2dp)
+    assert "1.77" in acwi_body        # active t-stat vs ACWI (2dp)
+    assert "0.012" in acwi_body       # MC p-value vs ACWI
+    assert "0.901" in acwi_body       # DSR vs ACWI
+    assert "5.67%" in acwi_body       # tracking error vs ACWI
+    assert "0.9123" not in html       # beta formatted to 2dp ...
+    assert "0.91" in acwi_body        # ... appears as 0.91
+    assert "ACWI-equivalent" in acwi_body
+    assert "88/12 DM/EM" in acwi_body
+    # No figures in the ACWI body (verdict-only, keeps the build fast)
+    assert "data:image/png;base64," not in acwi_body.split("</section>")[0]
+
+    # No ACWI verdict (e.g. blend50) -> section absent, pane unchanged
+    html_no = build_strategy_pane(
+        scores, prices, cfg, None, verdict, contributions
+    )
+    assert "vs ACWI" not in html_no
+    assert html_no.count('<button class="sec-toggle"') == 7
 
 
 def _tiny_segments() -> dict:
@@ -464,6 +612,28 @@ def test_render_dashboard_has_no_identifiers_bar():
     assert "Identifiers:" not in html
     assert "toggleIdx" not in html
     assert "idx-panel" not in html
+
+
+# ---------------------------------------------------------------------------
+# Section-toggle persistence across pane switches (shell JS)
+# ---------------------------------------------------------------------------
+
+def test_section_toggle_persistence_js():
+    """Section open/closed state is keyed by title in a global openSecs map
+    and re-applied by showPane() when switching strategy/segment."""
+    from country_rotation.reporting.dashboard import render_dashboard
+
+    html = render_dashboard("T", _tiny_segments())
+
+    # Global state map + normalized-title key helper
+    assert "var openSecs = {};" in html
+    assert "function secTitle(btn)" in html
+    assert ".trim().toLowerCase()" in html
+    # Single renderer for header+body state, used by toggle AND pane switch
+    assert "function applySecState(btn, open)" in html
+    assert "openSecs[title] = !openSecs[title];" in html
+    # showPane re-applies remembered state to the revealed pane's toggles
+    assert "applySecState(toggles[j], !!openSecs[secTitle(toggles[j])]);" in html
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +710,15 @@ def test_strategy_lineup_cfgs():
     assert by_key["blend50"].verdict_name("EM") == (
         "verdict_EM_prior_vm_p63_active_capbmk_blend50.json"
     )
+
+    # ACWI-relative verdict naming (vsWorld runs; blend50 has none)
+    assert by_key["cap_tilt"].acwi_verdict_name("DM") == (
+        "verdict_DM_prior_vm_p63_active_captilt_vsWorld.json"
+    )
+    assert by_key["eqw_active"].acwi_verdict_name("World") == (
+        "verdict_World_prior_vm_p63_active_vsWorld.json"
+    )
+    assert by_key["blend50"].acwi_verdict_name("EM") is None
 
 
 # ---------------------------------------------------------------------------

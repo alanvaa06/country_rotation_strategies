@@ -46,6 +46,7 @@ from country_rotation.config import BacktestConfig  # noqa: E402
 _DEFAULT_CONFIG = "configs/default.json"
 _DEFAULT_OUTPUT = "outputs/research/strategy_dashboard.html"
 _DEFAULT_VERDICT_DIR = "outputs/research"
+_DEFAULT_COSTS = "configs/costs.json"
 
 _MIN_COUNTRIES = 8
 
@@ -67,10 +68,46 @@ class StrategySpec:
     bmk_weight: float
     uses_base_weights: bool
     verdict_tag: str           # suffix after 'verdict_{seg}_prior_vm_p{p}_'
+    acwi_verdict_tag: str | None = None  # ACWI-relative run tag (None = no run)
 
     def verdict_name(self, segment: str, periodicity: int = 63) -> str:
         """Verdict JSON filename for *segment* (matches research_run tags)."""
         return f"verdict_{segment}_prior_vm_p{periodicity}_{self.verdict_tag}.json"
+
+    def acwi_verdict_name(
+        self, segment: str, periodicity: int = 63
+    ) -> str | None:
+        """ACWI-relative verdict JSON filename, or None if no ACWI run exists
+        for this strategy (e.g. blend50 — no ACWI blend runs)."""
+        if self.acwi_verdict_tag is None:
+            return None
+        return (
+            f"verdict_{segment}_prior_vm_p{periodicity}_"
+            f"{self.acwi_verdict_tag}.json"
+        )
+
+
+#: Verified identity of each segment's vendor benchmark index column.
+#: World: regression vs DM+EM gives 0.887/0.111 weights, residual TE 0.14%/yr
+#: (MSCI ACWI's ~88/12 DM/EM split). DM: corr 0.96 with US, cap-weighted
+#: developed-markets composite (MSCI World type). EM: corr 0.83 with China vs
+#: 0.39 with US, cap-weighted emerging composite (MSCI EM type).
+BMK_IDENTITY = {
+    "World": (
+        "Vendor <em>World</em> index — <strong>MSCI ACWI equivalent</strong> "
+        "(All-Country: 88/12 DM/EM cap-weight, verified by regression, "
+        "residual TE 0.14%/yr)"
+    ),
+    "DM": (
+        "Vendor <em>DM</em> index — <strong>MSCI World equivalent</strong> "
+        "(developed markets only, US-dominated cap-weight: corr 0.96 with US)"
+    ),
+    "EM": (
+        "Vendor <em>EM</em> index — <strong>MSCI Emerging Markets "
+        "equivalent</strong> (China-heavy cap-weight: corr 0.83 with China, "
+        "0.39 with US)"
+    ),
+}
 
 
 STRATEGIES: tuple[StrategySpec, ...] = (
@@ -82,6 +119,7 @@ STRATEGIES: tuple[StrategySpec, ...] = (
         bmk_weight=0.0,
         uses_base_weights=True,
         verdict_tag="active_captilt_capbmk",
+        acwi_verdict_tag="active_captilt_vsWorld",
     ),
     StrategySpec(
         key="eqw_active",
@@ -91,6 +129,7 @@ STRATEGIES: tuple[StrategySpec, ...] = (
         bmk_weight=0.0,
         uses_base_weights=False,
         verdict_tag="active_capbmk",
+        acwi_verdict_tag="active_vsWorld",
     ),
     StrategySpec(
         key="blend50",
@@ -205,6 +244,25 @@ def load_verdict(verdict_dir: str, spec: StrategySpec, segment: str,
         return json.load(f)
 
 
+def load_acwi_verdict(verdict_dir: str, spec: StrategySpec, segment: str,
+                      periodicity: int) -> dict | None:
+    """ACWI-relative verdict for *spec*, or None.
+
+    None when the strategy has no ACWI run (blend50) or the file is missing
+    (the per-pane \"vs ACWI\" section is optional decoration — a missing file
+    must not break the build)."""
+    name = spec.acwi_verdict_name(segment, periodicity)
+    if name is None:
+        return None
+    path = os.path.join(verdict_dir, name)
+    if not os.path.exists(path):
+        _log(f"WARNING: ACWI verdict missing: {path} — "
+             f"'vs ACWI' section omitted for [{segment}] '{spec.key}'.")
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -237,6 +295,11 @@ def main() -> None:
         "--output", default=_DEFAULT_OUTPUT,
         help="Path to write the dashboard HTML.",
     )
+    parser.add_argument(
+        "--costs", default=_DEFAULT_COSTS,
+        help="Cost-model JSON for the per-pane Transaction Costs & Turnover "
+             "section (set to '' to omit the section).",
+    )
     args = parser.parse_args()
 
     # Lazy imports: keep --help fast and import-side-effect free.
@@ -249,6 +312,14 @@ def main() -> None:
     )
 
     cfg_platform = load_config(args.config)
+
+    # Cost model loaded ONCE — passed to every pane for the live TCA section.
+    cost_model = None
+    if args.costs:
+        from country_rotation.backtest.tca import load_cost_model
+
+        cost_model = load_cost_model(args.costs)
+        _log(f"Cost model '{args.costs}' (as_of {cost_model.as_of}).")
 
     # Ingest ONCE — shared across segments and strategies.
     processed, classification = research_run.ingest(cfg_platform)
@@ -265,6 +336,9 @@ def main() -> None:
             verdict = load_verdict(
                 args.verdict_dir, spec, segment, args.periodicity
             )
+            acwi_verdict = load_acwi_verdict(
+                args.verdict_dir, spec, segment, args.periodicity
+            )
             bw = seg_inputs["base_weights"] if spec.uses_base_weights else None
             _log(f"[{segment}] building pane '{spec.key}' ({spec.label}) ...")
             panes[spec.key] = (
@@ -276,6 +350,9 @@ def main() -> None:
                     bw,
                     verdict,
                     seg_inputs["contributions"],
+                    acwi_verdict=acwi_verdict,
+                    bmk_label=BMK_IDENTITY.get(segment),
+                    cost_model=cost_model,
                 ),
             )
         segments[segment] = panes

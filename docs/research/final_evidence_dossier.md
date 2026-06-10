@@ -37,8 +37,16 @@ Per the goal's "rethink the signal development" mandate, a **pre-registered 6-sp
 - Canonical *level*-selection specs (AMP exact form) were flat-to-negative in this universe — the tradable edge here is in **signal change** (fundamental/score revisions momentum), not signal level.
 - Methodological note: this is the system working as designed — in-sample IC advantages that don't survive construction are caught before deployment, and the 6 extra trials are logged in the multiple-testing ledger.
 
+## Addendum — ACWI sole-benchmark evaluation (2026-06-09/10)
+
+All six books (World/DM/EM × Cap-Tilt/EqW-active, vm @63d) re-measured against the vendor **World index = verified ACWI-equivalent** (regression vs DM+EM: 0.887/0.111, residual TE 0.14%/yr). Only positive-IR book: **DM Cap-Tilt vs ACWI — IR +0.30, active t 1.22, MC p 0.044, stability PASS (1.00), 100% OOS folds positive, TE 2.1%, beta 0.98, bootstrap one-sided p(IR≤0) = 0.054**.
+
+**Forensics attribution kill (outputs/research/overfit_forensics_DM_vsWorld.md):** not parameter-overfit (1/7 signatures, all tuning probes clean, DSR failure = power artifact needing ~45y) — but the exact return decomposition shows the entire active mean is the **passive DM−ACWI composition spread (+0.75%/yr, IR +0.46, NW t +2.39)**, while within-DM selection contributed **−0.10%/yr** on this sample. Family-wise (1-of-6 books) Bonferroni MC p = 0.26.
+
+**ACWI verdict, honestly stated:** the goal's three conditions are met only superficially by DM Cap-Tilt (positive alpha +0.30, positive IC +0.043, MC significance 0.044) — attribution shows the alpha is a **structural DM-overweight bet vs ACWI**, itself NW-significant (t 2.39) but beta-composition, not selection skill. No book currently delivers significant *selection* alpha over ACWI. The platform caught this before deployment — exactly its job.
+
 ## Standing decisions
-1. **Deploy-candidate: EM Cap-Tilt vm @63d** (paper-trade; quarterly re-cert via runbook — `python scripts/research_run.py --segment EM --track prior --prior-set vm --periodicity 63 --bmk-source index --construction cap_tilt`).
-2. DM watch-list: vm blend vs eqw null (skill significant, mandate IR flat after Cap-Tilt fix).
-3. World: signal significant (IC t 2.29), no mandate-positive book found — revisit only with construction research (free-float base) or new data.
-4. Every future variant counts toward the cross-run DSR/multiple-testing ledger (currently: 150 legacy scenarios + 8 segment runs + 6×3 tournament specs + S5 confirmations).
+1. **Deploy-candidate (own-segment mandate): EM Cap-Tilt vm @63d vs EM cap index** (paper-trade; quarterly re-cert via runbook). Caveat: does NOT survive an ACWI measuring stick (−0.28) — mandate benchmark choice is load-bearing.
+2. **ACWI-relative:** DM Cap-Tilt is a disguised DM-composition bet (significant as a passive spread, t 2.39; not selection alpha). Do not market as skill. If the *composition* bet is wanted, hold DM index vs ACWI directly — cheaper.
+3. World: signal significant (IC t 2.29), no mandate-positive book — revisit with free-float base construction or new data.
+4. Multiple-testing ledger now ≈ 200 trials (legacy 150 + segment runs + tournament + S5 + 6 ACWI books); every future variant logs here.

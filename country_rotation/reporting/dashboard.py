@@ -17,6 +17,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from country_rotation.backtest import tca as tca_module
 from country_rotation.backtest.benchmarks import equal_weight_buy_hold
 from country_rotation.backtest.engine import Engine
 from country_rotation.backtest.ic import ic_stats, information_coefficient
@@ -40,14 +41,23 @@ from country_rotation.reporting.report import (
     table_risk,
     table_weights_latest,
 )
+from country_rotation.reporting.signal_viz import (
+    fig_cost_layers,
+    fig_net_cumulative,
+    fig_turnover,
+)
 
 __all__ = [
+    "acwi_section_body",
     "build_strategy_pane",
     "evidence_grade",
     "render_dashboard",
     "stat_cards",
+    "tca_section_body",
     "verdict_banner",
 ]
+
+_TRADING_DAYS_PER_YEAR = 252.0
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +210,17 @@ def evidence_grade(verdict: dict) -> dict:
     }
 
 
+def _gate_chips(gates: list) -> str:
+    """Per-gate chip row (value + threshold + PASS/fail) for a gate list."""
+    return "".join(
+        f'<span class="gate-chip gate-{g["state"]}" '
+        f'title="{g["label"]}: {g["value"]} (threshold {g["threshold"]})">'
+        f'{g["label"]} {g["value"]} <small>{g["threshold"]}</small> '
+        f'{"PASS" if g["passed"] else "fail"}</span>'
+        for g in gates
+    )
+
+
 def verdict_banner(verdict: dict) -> str:
     """Evidence-grade banner: tier line + per-gate chips + plain-language note.
 
@@ -208,13 +229,7 @@ def verdict_banner(verdict: dict) -> str:
     pass, DSR short on sample size) is not misread as overfitting.
     """
     grade = evidence_grade(verdict)
-    chips = "".join(
-        f'<span class="gate-chip gate-{g["state"]}" '
-        f'title="{g["label"]}: {g["value"]} (threshold {g["threshold"]})">'
-        f'{g["label"]} {g["value"]} <small>{g["threshold"]}</small> '
-        f'{"PASS" if g["passed"] else "fail"}</span>'
-        for g in grade["gates"]
-    )
+    chips = _gate_chips(grade["gates"])
     chips_html = f'<div class="gate-chips">{chips}</div>' if chips else ""
     return (
         f'<div class="banner grade-{grade["tier"]}">'
@@ -257,6 +272,52 @@ def stat_cards(verdict: dict) -> str:
         _card("IC rel (t)", _fmt(ic_rel.get("t_stat"))),
     ]
     return '<div class="cards">' + "".join(cards) + "</div>"
+
+
+def acwi_section_body(acwi_verdict: dict) -> str:
+    """Body HTML for the \"vs ACWI (sole benchmark)\" collapsible section.
+
+    Re-certifies the SAME strategy against the vendor World index
+    (ACWI-equivalent global cap-weighted benchmark) instead of the segment
+    benchmark: compact evidence-grade line + per-gate chips (reusing
+    :func:`evidence_grade`), a stat-card row from the ACWI verdict's
+    ``stats`` / ``mandate_stats``, and a benchmark-provenance note.
+    No figures — keeps the dashboard build fast.
+    """
+    grade = evidence_grade(acwi_verdict)
+    stats = acwi_verdict.get("stats") or {}
+    mandate = acwi_verdict.get("mandate_stats") or {}
+
+    chips = _gate_chips(grade["gates"])
+    chips_html = f'<div class="gate-chips">{chips}</div>' if chips else ""
+    grade_html = (
+        f'<div class="banner acwi-grade grade-{grade["tier"]}">'
+        f'<div class="grade-line"><strong>{grade["label"]}</strong> '
+        '<small style="font-weight:400;">vs ACWI</small></div>'
+        f"{chips_html}"
+        "</div>"
+    )
+
+    ci = stats.get("bootstrap_ci") or [None, None]
+    ci_txt = f"[{_fmt(ci[0])}, {_fmt(ci[1])}]"
+    cards = [
+        _card("IR (active, ann.)", _fmt(stats.get("sharpe_ann"))),
+        _card("Active t-stat", _fmt(stats.get("sharpe_t_stat"))),
+        _card("MC p-value", _fmt(stats.get("mc_p_value"), decimals=3)),
+        _card("DSR", _fmt(stats.get("dsr"), decimals=3)),
+        _card("Bootstrap CI", ci_txt),
+        _card("Tracking Error", _fmt(mandate.get("tracking_error"), pct=True)),
+        _card("Beta", _fmt(mandate.get("beta"))),
+    ]
+    cards_html = '<div class="cards">' + "".join(cards) + "</div>"
+
+    note = (
+        '<p class="grade-note acwi-note">Benchmark for this section is the '
+        "vendor World index — ACWI-equivalent (88/12 DM/EM composition "
+        "verified) — used as the sole benchmark for selection, mandate "
+        "comparison and certification.</p>"
+    )
+    return grade_html + cards_html + note
 
 
 def _pass_cell(passed: Optional[bool]) -> str:
@@ -349,23 +410,199 @@ def scorecard_from_verdict(verdict: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Transaction Costs & Turnover (shared body builder + live computation)
+# ---------------------------------------------------------------------------
+
+#: Cumulative cost layers shown in the TCA table:
+#: (layer_irs key, row label, cost_ann_bps key — None for the gross row).
+_TCA_LAYER_ROWS = (
+    ("gross", "Gross active", None),
+    ("net_spread", "&minus; Spread + commission", "trading"),
+    ("net_spread_expense", "&minus; ETF expense", "expense"),
+    ("net_mgmt_50bps", "&minus; Mgmt fee 50 bps", "mgmt50"),
+)
+
+#: Canonical layer order for the cost-layer waterfall figure.
+_TCA_FIG_LAYERS = ("gross", "net_spread", "net_spread_expense",
+                   "net_mgmt_50bps")
+
+
+def tca_section_body(
+    layer_irs: dict,
+    cost_ann_bps: dict,
+    figs: list,
+    top_traded: Optional[pd.Series] = None,
+    breakeven_bps: Optional[float] = None,
+    top_n: int = 8,
+) -> str:
+    """Body HTML of a \"Transaction Costs & Turnover\" section.
+
+    Shared by the research dashboard (live TCA from an in-pane engine run)
+    and the production dashboard (tca.json / turnover.csv artifacts).
+
+    Parameters
+    ----------
+    layer_irs:
+        ``{layer key: annualized IR}`` (``tca.CostReport.layer_irs`` keys).
+    cost_ann_bps:
+        ``{"trading": spread+commission, "expense": ..., "mgmt50": ...}``
+        annualized bps per drag layer.
+    figs:
+        Base64 PNG strings (``None`` entries skipped) — turnover bars,
+        cost-layer waterfall, net cumulative lines.
+    top_traded:
+        Optional avg one-way traded notional per country (descending);
+        the top ``top_n`` become the turnover-contributors table.
+    breakeven_bps:
+        Optional flat one-way bps at which the active IR reaches zero
+        (rendered as a callout chip).
+    """
+    parts: list[str] = []
+
+    if breakeven_bps is not None and not np.isnan(breakeven_bps):
+        parts.append(
+            '<div class="breakeven-chip"><strong>Breakeven cost: '
+            f"{breakeven_bps:.0f} bps one-way</strong> — flat per-trade "
+            "cost at which the gross active IR reaches zero.</div>"
+        )
+
+    for b64 in figs:
+        if b64:
+            parts.append(_img_tag(b64, "TCA figure"))
+
+    rows = []
+    for key, label, bps_key in _TCA_LAYER_ROWS:
+        if key not in layer_irs:
+            continue
+        bps = cost_ann_bps.get(bps_key) if bps_key else None
+        rows.append(
+            f"<tr><td>{label}</td>"
+            f"<td>{_fmt(bps, decimals=1) if bps_key else '—'}</td>"
+            f"<td>{_fmt(layer_irs[key], decimals=3)}</td></tr>"
+        )
+    if rows:
+        parts.append("<h4 class='tbl-title'>Cost Layers (cumulative)</h4>")
+        parts.append(
+            "<table class='tca-table'><thead><tr><th>Layer</th>"
+            "<th>Ann. cost (bps)</th><th>Cumulative IR</th></tr></thead>"
+            "<tbody>" + "".join(rows) + "</tbody></table>"
+        )
+
+    if top_traded is not None and len(top_traded.dropna()) > 0:
+        top = top_traded.dropna().head(top_n)
+        t_rows = "".join(
+            f"<tr><td>{c}</td><td>{_fmt(v, pct=True, decimals=2)}</td></tr>"
+            for c, v in top.items()
+        )
+        parts.append(
+            f"<h4 class='tbl-title'>Top {len(top)} Turnover "
+            "Contributors</h4>"
+            "<table class='tca-table'><thead><tr><th>Country</th>"
+            "<th>Avg one-way traded / rebalance</th></tr></thead>"
+            f"<tbody>{t_rows}</tbody></table>"
+        )
+
+    return "\n".join(parts)
+
+
+def _pane_tca_body(engine_result, cost_model, cfg: BacktestConfig) -> str:
+    """Live TCA body for a research pane (engine result + cost model).
+
+    Empty string on any failure — the section is optional decoration and
+    must never break a dashboard build.
+    """
+    try:
+        segment = (
+            cfg.bmk if cfg.bmk in cost_model.expense_ratio_bps else "World"
+        )
+        turn = tca_module.turnover_analysis(engine_result, bmk=cfg.bmk)
+        decomp = tca_module.cost_decomposition(
+            engine_result, cost_model, segment, bmk=cfg.bmk
+        )
+        try:
+            breakeven = tca_module.breakeven_cost(
+                engine_result, decomp.gross_ir
+            )
+        except ValueError:
+            breakeven = None
+        layer_irs = dict(decomp.layer_irs)
+
+        # Daily active layers for the cumulative chart.
+        layers = None
+        dr = engine_result.daily_returns
+        db = engine_result.daily_bmk_returns
+        if dr is not None and db is not None:
+            active = (dr - db).dropna()
+            trading = (
+                (decomp.per_period["spread_cost"]
+                 + decomp.per_period["commission_cost"])
+                .reindex(active.index)
+                .fillna(0.0)
+            )
+            expense_daily = (
+                float(cost_model.expense_ratio_bps[segment])
+                / _TRADING_DAYS_PER_YEAR / 1e4
+            )
+            net_spread = active - trading
+            net_spread_expense = net_spread - expense_daily
+            layers = {
+                "gross": active,
+                "net_spread": net_spread,
+                "net_spread_expense": net_spread_expense,
+            }
+            if 50.0 in cost_model.mgmt_fee_scenarios_bps:
+                layers["net_mgmt_50bps"] = (
+                    net_spread_expense - 50.0 / _TRADING_DAYS_PER_YEAR / 1e4
+                )
+
+        figs = [
+            fig_turnover(turn.per_rebalance),
+            fig_cost_layers(
+                {k: layer_irs[k] for k in _TCA_FIG_LAYERS if k in layer_irs}
+            ),
+            fig_net_cumulative(layers),
+        ]
+        cost_ann_bps = {
+            "trading": decomp.spread_ann_bps + decomp.commission_ann_bps,
+            "expense": decomp.expense_ann_bps,
+            "mgmt50": decomp.mgmt_ann_bps.get(50.0),
+        }
+        return tca_section_body(
+            layer_irs, cost_ann_bps, figs,
+            top_traded=turn.country_avg_traded,
+            breakeven_bps=breakeven,
+        )
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Strategy pane
 # ---------------------------------------------------------------------------
 
-def _section(title: str, body_html: str) -> str:
+def _section(title: str, body_html: str, open: bool = False) -> str:
     """Collapsible section: <button> header (keyboard accessible) + hidden body.
 
-    All sections start COLLAPSED (display:none, aria-expanded=false); the
+    Sections start COLLAPSED by default (display:none, aria-expanded=false);
+    pass ``open=True`` for a section that should start expanded (the shell's
+    ``openSecs`` map must then be pre-seeded with its normalized title). The
     shell's ``toggleSec`` JS flips visibility and the ▸/▾ arrow. Banner and
     stat cards stay outside sections so they are always visible.
+
+    The title lives in its own ``<span class="sec-title">`` so the shell JS
+    can key open/closed state by title and persist it across pane switches.
     """
+    expanded = "true" if open else "false"
+    arrow = "▾" if open else "▸"
+    display = "block" if open else "none"
     return (
         '<section class="sec">'
-        '<button class="sec-toggle" type="button" aria-expanded="false" '
+        f'<button class="sec-toggle" type="button" aria-expanded="{expanded}" '
         'onclick="toggleSec(this)">'
-        '<span class="sec-arrow">▸</span> ' + title + "</button>"
-        '<div class="sec-body" style="display:none">' + body_html + "</div>"
-        "</section>"
+        f'<span class="sec-arrow">{arrow}</span> '
+        '<span class="sec-title">' + title + "</span></button>"
+        f'<div class="sec-body" style="display:{display}">' + body_html
+        + "</div></section>"
     )
 
 
@@ -376,6 +613,9 @@ def build_strategy_pane(
     base_weights: Optional[pd.DataFrame],
     verdict: dict,
     contributions: Optional[dict],
+    acwi_verdict: Optional[dict] = None,
+    bmk_label: Optional[str] = None,
+    cost_model=None,
 ) -> str:
     """Build the full HTML fragment for one (segment, strategy) pane.
 
@@ -396,6 +636,21 @@ def build_strategy_pane(
     contributions:
         Optional ``{category: DataFrame(dates x countries)}`` score
         building-block decomposition.
+    acwi_verdict:
+        Optional ACWI-relative verdict JSON (same strategy certified against
+        the vendor World index as sole benchmark). When provided, a
+        collapsible \"vs ACWI (sole benchmark)\" section is appended.
+    bmk_label:
+        Human-readable identity of the pane's PRIMARY benchmark (the one all
+        headline stats are measured against), e.g. \"Vendor EM index — MSCI
+        Emerging Markets equivalent\". Rendered as an always-visible badge
+        under the verdict banner.
+    cost_model:
+        Optional :class:`country_rotation.backtest.tca.CostModel`. When
+        provided, a collapsible \"Transaction Costs & Turnover\" section is
+        computed LIVE from the pane's engine run (turnover bars, cost-layer
+        waterfall, net cumulative active lines, layer table, breakeven
+        chip). ``None`` -> section omitted.
 
     Returns
     -------
@@ -457,8 +712,13 @@ def build_strategy_pane(
     # ------------------------------------------------------------------
     parts: list[str] = []
 
-    # Always visible: evidence-grade banner + headline stat cards.
+    # Always visible: evidence-grade banner + benchmark identity + stat cards.
     parts.append(verdict_banner(verdict))
+    if bmk_label:
+        parts.append(
+            '<div class="bmk-badge"><strong>Benchmark:</strong> '
+            f"{bmk_label}</div>"
+        )
     parts.append(stat_cards(verdict))
 
     # --- Performance (absolute + relative) ---
@@ -500,6 +760,14 @@ def build_strategy_pane(
             ic_parts.append(table_ic_stats(ic_stats_results[method], method))
     parts.append(_section("IC Analysis", "\n".join(ic_parts)))
 
+    # --- Transaction Costs & Turnover (optional cost model) ---
+    if cost_model is not None:
+        tca_body = _pane_tca_body(engine_result, cost_model, cfg)
+        if tca_body:
+            parts.append(_section(
+                "Transaction Costs &amp; Turnover", tca_body
+            ))
+
     # --- Score building-block decomposition ---
     if contributions:
         decomp: list[str] = []
@@ -523,6 +791,12 @@ def build_strategy_pane(
 
     # --- Validation scorecard ---
     parts.append(_section("Validation Scorecard", scorecard_from_verdict(verdict)))
+
+    # --- ACWI-relative certification (no figures; verdict-only) ---
+    if acwi_verdict is not None:
+        parts.append(_section(
+            "vs ACWI (sole benchmark)", acwi_section_body(acwi_verdict)
+        ))
 
     return "\n".join(parts)
 
@@ -567,6 +841,9 @@ h1 { font-size:1.25rem; margin-bottom:8px; padding-bottom:6px; }
         padding:12px 20px 16px; }
 /* --- Evidence-grade banner + per-gate chips --- */
 .banner { padding:8px 14px; border-radius:6px; margin:2px 0 10px 0; }
+.bmk-badge { font-size:0.8rem; color:#1e3a5f; background:#eef4fb;
+             border:1px solid #bfdbfe; border-radius:4px;
+             padding:5px 12px; margin:0 0 10px 0; }
 .grade-certified { background:#d1fae5; border:1px solid #10b981; }
 .grade-power_limited { background:#fef3c7; border:1px solid #f59e0b; }
 .grade-weak { background:#f3f4f6; border:1px solid #9ca3af; }
@@ -597,11 +874,24 @@ h1 { font-size:1.25rem; margin-bottom:8px; padding-bottom:6px; }
 .sec-toggle:focus-visible { outline:2px solid #2563EB; outline-offset:1px; }
 .sec-arrow { display:inline-block; width:1em; }
 .sec-body { padding:2px 4px 8px 4px; }
+/* --- ACWI-relative certification section --- */
+.acwi-grade { margin:2px 0 8px 0; }
+.acwi-note { margin-top:2px; }
+/* --- TCA section (breakeven chip + layer tables) --- */
+.breakeven-chip { display:inline-block; font-size:0.82rem; color:#1e3a5f;
+                  background:#eef4fb; border:1px solid #bfdbfe;
+                  border-radius:999px; padding:5px 14px; margin:2px 0 10px 0; }
+.tca-table { max-width:560px; }
+.tca-table td:last-child { text-align:right;
+                           font-variant-numeric:tabular-nums; }
 """
 
 _DASH_JS = """
 var currentSeg = "%(default_seg)s";
 var currentStrat = "%(default_strat)s";
+// Section open/closed state keyed by normalized section TITLE — persists
+// across strategy/segment switches (an open "Performance" stays open).
+var openSecs = {};
 
 function _setActive(selector, attr, value) {
   var btns = document.querySelectorAll(selector);
@@ -614,13 +904,37 @@ function _setActive(selector, attr, value) {
   }
 }
 
+function secTitle(btn) {
+  // Normalized state key for a section header (lowercase trimmed title).
+  var span = btn.querySelector(".sec-title");
+  var txt = span ? span.textContent : btn.textContent;
+  return txt.replace(/[\\u25B8\\u25BE]/g, "").trim().toLowerCase();
+}
+
+function applySecState(btn, open) {
+  // Render one section header + body to the given open/closed state.
+  var body = btn.nextElementSibling;
+  if (!body) { return; }
+  body.style.display = open ? "block" : "none";
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  var arrow = btn.querySelector(".sec-arrow");
+  if (arrow) { arrow.textContent = open ? "\\u25BE" : "\\u25B8"; }
+}
+
 function showPane() {
   var panes = document.querySelectorAll(".pane");
   for (var i = 0; i < panes.length; i++) {
     panes[i].style.display = "none";
   }
   var target = document.getElementById(currentSeg + "-" + currentStrat);
-  if (target) { target.style.display = "block"; }
+  if (target) {
+    target.style.display = "block";
+    // Re-apply remembered section state to THIS pane's toggles.
+    var toggles = target.querySelectorAll(".sec-toggle");
+    for (var j = 0; j < toggles.length; j++) {
+      applySecState(toggles[j], !!openSecs[secTitle(toggles[j])]);
+    }
+  }
   _setActive(".seg-tab", "data-seg", currentSeg);
   _setActive(".strat-btn", "data-strat", currentStrat);
 }
@@ -637,14 +951,10 @@ function selectStrat(strat) {
 }
 
 function toggleSec(btn) {
-  // Collapsible section header: flip body visibility + arrow + aria state.
-  var body = btn.nextElementSibling;
-  if (!body) { return; }
-  var open = body.style.display !== "none";
-  body.style.display = open ? "none" : "block";
-  btn.setAttribute("aria-expanded", open ? "false" : "true");
-  var arrow = btn.querySelector(".sec-arrow");
-  if (arrow) { arrow.textContent = open ? "\\u25B8" : "\\u25BE"; }
+  // Flip the remembered state for this section title, then render.
+  var title = secTitle(btn);
+  openSecs[title] = !openSecs[title];
+  applySecState(btn, openSecs[title]);
 }
 
 """

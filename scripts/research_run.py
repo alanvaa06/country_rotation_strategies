@@ -40,13 +40,19 @@ cap-weighted aggregate is not constructible from the inputs (no investable
 country weights); the raw ``Price.xlsx`` index columns (``World``/``DM``/
 ``EM``) are external index levels that fall outside the classified universe
 and are intentionally replaced so the benchmark matches the equal-weight
-buy-and-hold null used inside the validation suite.
+buy-and-hold null used inside the validation suite.  ``--bmk-source index``
+swaps in the vendor cap-weighted segment index column instead, and
+``--bmk-index NAME`` pins a single cross-segment vendor index (e.g.
+``World``, the verified ACWI-equivalent: 0.887 DM + 0.111 EM, 0.14%/yr
+residual TE) as the benchmark for ANY segment book — it overrides
+``--bmk-source``.
 
 Usage
 -----
     python scripts/research_run.py --segment World [--track screen|prior]
         [--quick] [--periodicity 63] [--fdr-q 0.10]
         [--construction eqw|cap_tilt] [--signal blend|amp_ey]
+        [--bmk-index World]
 
 ``--signal amp_ey`` swaps the composite for the S5_amp_ey_change tournament
 winner (scripts/spec_tournament.py): 0.5*relative_rank(Momentum_12_1) +
@@ -58,8 +64,9 @@ pre-registered tournament), so it requires ``--track prior``.
 ``--construction cap_tilt`` switches the portfolio construction from the
 default equal-weight top-N sleeve to the benchmark-aware Cap_Tilt book
 (cap-weight base from the ``Market_Cap`` input, +/- ``active_share`` score
-tilts).  It is the investable-mandate construction, so it requires
-``--bmk-source index`` and ``--mode active``.
+tilts).  It is the investable-mandate construction, so it requires a vendor
+index benchmark (``--bmk-source index`` OR ``--bmk-index NAME``) and
+``--mode active``.
 
 Note: requires local data (``Inputs/``, ``Classification.xlsx``) which is
 gitignored — present on the research machine only.
@@ -486,6 +493,98 @@ def build_amp_ey_composite(processed: dict, universe: list) -> tuple:
 # Verdict serialization
 # ---------------------------------------------------------------------------
 
+def compute_tca_block(
+    engine_result,
+    cost_model,
+    segment: str,
+    validation_report,
+    n_boot: int,
+    seed: int = 42,
+    bmk=None,
+) -> dict:
+    """Net-of-cost evidence for a costed engine run (``--costs``).
+
+    Returns ``{"tca": ..., "cost_model_summary": ..., "stats_net": ...}``:
+
+    * ``tca`` — turnover (ann/avg/max), cost layers in annualized bps,
+      cumulative layer IRs (gross -> net_spread -> net_spread_expense ->
+      net_mgmt_{s}bps) and the flat one-way breakeven cost.
+    * ``stats_net`` — headline stats on the NET-of-trading-cost active daily
+      series (active minus spread+commission charged on rebalance days):
+      annualized IR, Lo t-stat, bootstrap CI, and a CONSERVATIVE net MC
+      p-value (net actual Sharpe vs the validation run's null distribution,
+      whose random books' daily curves carry no trading-cost drag).
+      Expense + mgmt-fee drags are constant-mean shifts reported as layers;
+      ``net_mgmt_50_ir`` is the headline net-of-fee number.
+    """
+    import numpy as np
+
+    from country_rotation.backtest import tca
+    from country_rotation.validation.protocols import equity_curve
+    from country_rotation.validation.statistics import (
+        bootstrap_sharpe_ci,
+        sharpe_significance,
+    )
+
+    turn = tca.turnover_analysis(engine_result, bmk=bmk)
+    decomp = tca.cost_decomposition(engine_result, cost_model, segment, bmk=bmk)
+    breakeven = tca.breakeven_cost(engine_result, decomp.gross_ir)
+
+    layer_irs = dict(decomp.layer_irs)
+    mgmt_key_50 = "net_mgmt_50bps"
+
+    # --- NET active daily series: gross active minus trading costs --------
+    active = (
+        engine_result.daily_returns - engine_result.daily_bmk_returns
+    ).dropna()
+    trading_cost = (
+        (decomp.per_period["spread_cost"] + decomp.per_period["commission_cost"])
+        .reindex(active.index)
+        .fillna(0.0)
+    )
+    net_active = active - trading_cost
+    net_eq = equity_curve(net_active)
+    net_sig = sharpe_significance(net_eq)
+    net_boot = bootstrap_sharpe_ci(net_eq, n_boot=n_boot, seed=seed)
+
+    null = validation_report.mc.null_sharpes
+    net_actual = 0.0 if math.isnan(net_sig.sharpe_ann) else net_sig.sharpe_ann
+    net_mc_p = (float((null >= net_actual).sum()) + 1.0) / (len(null) + 1.0)
+
+    tca_block = {
+        "turnover": {
+            "ann_one_way": turn.ann_one_way_turnover,
+            "avg_per_rebalance": turn.avg_turnover,
+            "max_per_rebalance": turn.max_turnover,
+        },
+        "cost_layers_ann_bps": {
+            "spread": decomp.spread_ann_bps,
+            "commission": decomp.commission_ann_bps,
+            "expense": decomp.expense_ann_bps,
+            "mgmt": {f"{s:g}bps": v for s, v in decomp.mgmt_ann_bps.items()},
+        },
+        "layer_irs": layer_irs,
+        "breakeven_bps": breakeven,
+    }
+    stats_net = {
+        "basis": (
+            "active daily net of spread+commission (vector cost model, "
+            "charged on rebalance days); expense + mgmt fee are constant "
+            "accruals reported as layers in 'tca'"
+        ),
+        "sharpe_ann": net_sig.sharpe_ann,
+        "sharpe_t_stat": net_sig.t_stat,
+        "mc_p_value": net_mc_p,
+        "mc_note": (
+            "net actual Sharpe vs the uncosted random-book null "
+            "distribution — conservative (random books trade more)"
+        ),
+        "bootstrap_ci": [net_boot.ci_low, net_boot.ci_high],
+        "net_mgmt_50_ir": layer_irs.get(mgmt_key_50),
+    }
+    return {"tca": tca_block, "stats_net": stats_net}
+
+
 def build_verdict_payload(
     args,
     universe,
@@ -499,6 +598,9 @@ def build_verdict_payload(
     mandate_stats=None,
     composite_ic=None,
     active_share=None,
+    cost_model_summary=None,
+    tca_block=None,
+    stats_net=None,
 ) -> dict:
     """Assemble the verdict JSON payload (both tracks).
 
@@ -576,6 +678,7 @@ def build_verdict_payload(
             "signal": getattr(args, "signal", "blend"),
             "basis": args.basis,
             "bmk_source": getattr(args, "bmk_source", "eqw"),
+            "bmk_index": getattr(args, "bmk_index", None),
             "mode": getattr(args, "mode", "active"),
             "bmk_weight": getattr(args, "bmk_weight", 0.0),
             "construction": construction,
@@ -595,6 +698,12 @@ def build_verdict_payload(
     }
     if construction == "cap_tilt":
         payload["active_share"] = active_share
+    if cost_model_summary is not None:
+        payload["cost_model"] = cost_model_summary
+    if tca_block is not None:
+        payload["tca"] = tca_block
+    if stats_net is not None:
+        payload["stats_net"] = stats_net
     return _json_safe(payload)
 
 
@@ -631,6 +740,33 @@ def print_verdict_summary(payload: dict) -> None:
             f"  bootstrap_ci=[{_f(ci[0], '{:.4f}')}, {_f(ci[1], '{:.4f}')}] "
             f"nw_t_vs_eqw={_f(s['nw_t_vs_eqw'], '{:.2f}')} "
             f"frac_oos_pos={_f(s['frac_oos_positive'], '{:.2f}')}"
+        )
+    if payload.get("tca") is not None:
+        t = payload["tca"]
+        sn = payload.get("stats_net") or {}
+        layers = t["layer_irs"]
+        _log(
+            f"  TCA turnover ann={_f(t['turnover']['ann_one_way'], '{:.2f}')} "
+            f"avg={_f(t['turnover']['avg_per_rebalance'])} "
+            f"max={_f(t['turnover']['max_per_rebalance'])}"
+        )
+        _log(
+            "  TCA layer IRs: gross="
+            + _f(layers.get("gross"), "{:.3f}")
+            + f" net_spread={_f(layers.get('net_spread'), '{:.3f}')}"
+            + f" +expense={_f(layers.get('net_spread_expense'), '{:.3f}')}"
+            + f" +mgmt50={_f(layers.get('net_mgmt_50bps'), '{:.3f}')}"
+        )
+        _log(
+            f"  TCA net stats: ir={_f(sn.get('sharpe_ann'), '{:.3f}')} "
+            f"t={_f(sn.get('sharpe_t_stat'), '{:.2f}')} "
+            f"mc_p={_f(sn.get('mc_p_value'))} "
+            f"breakeven={_f(t['breakeven_bps'], '{:.1f}')}bps"
+        )
+        ci = sn.get("bootstrap_ci") or [None, None]
+        _log(
+            f"  TCA net bootstrap_ci=[{_f(ci[0], '{:.4f}')}, "
+            f"{_f(ci[1], '{:.4f}')}]"
         )
     for note in v["notes"]:
         _log(f"  note: {note}")
@@ -703,6 +839,14 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
              "benchmark, e.g. MSCI-style DM/EM/World).",
     )
     parser.add_argument(
+        "--bmk-index", default=None, dest="bmk_index", metavar="NAME",
+        help="Vendor index column from the Price input to use as THE "
+             "benchmark regardless of segment (e.g. 'World' = ACWI-"
+             "equivalent: regression vs DM+EM gives 0.887/0.111 weights, "
+             "residual TE 0.14%%/yr). Overrides --bmk-source. The book stays "
+             "the segment universe; only the measuring stick changes.",
+    )
+    parser.add_argument(
         "--mode", choices=("active", "blend"), default="active",
         help="Engine mode: 'active' (default) = 100%% selection sleeve, "
              "benchmark used for comparison only; 'blend' = core-satellite "
@@ -720,6 +864,14 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
              "Market_Cap input +/- active-share score tilts (benchmark-aware "
              "mandate book; requires --bmk-source index and --mode active).",
     )
+    parser.add_argument(
+        "--costs", default=None, metavar="PATH",
+        help="Optional cost-model JSON (configs/costs.json). When set, the "
+             "engine charges per-country one-way spread+commission bps "
+             "everywhere (validation, walk-forward, MC null books — "
+             "like-for-like), the tag gains a '_tca' suffix and the verdict "
+             "carries net-of-cost stats, cost layers and breakeven.",
+    )
     args = parser.parse_args()
 
     if args.signal == "amp_ey" and args.track != "prior":
@@ -731,13 +883,15 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         )
 
     if args.construction == "cap_tilt" and (
-        args.bmk_source != "index" or args.mode != "active"
+        (args.bmk_source != "index" and args.bmk_index is None)
+        or args.mode != "active"
     ):
         raise SystemExit(
             "[research_run] ERROR: --construction cap_tilt is the "
-            "benchmark-aware mandate construction — it requires "
-            "--bmk-source index and --mode active "
-            f"(got bmk_source='{args.bmk_source}', mode='{args.mode}')."
+            "benchmark-aware mandate construction — it requires a vendor "
+            "index benchmark (--bmk-source index OR --bmk-index NAME) and "
+            f"--mode active (got bmk_source='{args.bmk_source}', "
+            f"bmk_index={args.bmk_index!r}, mode='{args.mode}')."
         )
 
     t0 = time.time()
@@ -772,7 +926,31 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
 
     prices = price_df[universe].copy()
     prices_with_bmk = prices.copy()
-    if args.bmk_source == "index":
+    # Benchmark column name: the cross-segment vendor index when --bmk-index
+    # is set (e.g. 'World' as ACWI proxy for a DM or EM book), else the
+    # segment name (both --bmk-source branches). The universe holds country
+    # columns only (Region pseudo-rows are excluded upstream), so the
+    # benchmark column never collides with a book asset.
+    bmk_col = args.bmk_index or args.segment
+    if args.bmk_index is not None:
+        # Cross-segment vendor index benchmark. 'World' is the verified
+        # ACWI-equivalent: regression vs DM+EM gives 0.887/0.111 weights
+        # with 0.14%/yr residual TE — MSCI ACWI's ~88/12 split. Overrides
+        # --bmk-source; the book is unchanged, only the measuring stick.
+        if args.bmk_index not in price_df.columns:
+            raise SystemExit(
+                f"[research_run] ERROR: --bmk-index requires a "
+                f"'{args.bmk_index}' index column in the Price input "
+                f"(columns available: vendor index levels carried outside "
+                f"the country universe)."
+            )
+        prices_with_bmk[bmk_col] = price_df[args.bmk_index]
+        _log(
+            f"Benchmark: vendor index column '{args.bmk_index}'"
+            + (" (ACWI)" if args.bmk_index == "World" else "")
+            + " — overrides --bmk-source."
+        )
+    elif args.bmk_source == "index":
         # Vendor cap-weighted segment index level (e.g. MSCI-style 'DM'
         # column carried in the raw Price file) — the investable mandate
         # benchmark. Verified cap-weight signature: corr(DM, US) ~ 0.94
@@ -782,10 +960,10 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
                 f"[research_run] ERROR: --bmk-source index requires a "
                 f"'{args.segment}' index column in the Price input."
             )
-        prices_with_bmk[args.segment] = price_df[args.segment]
+        prices_with_bmk[bmk_col] = price_df[args.segment]
         _log(f"Benchmark: vendor cap-weighted '{args.segment}' index column.")
     else:
-        prices_with_bmk[args.segment] = equal_weight_index(prices)
+        prices_with_bmk[bmk_col] = equal_weight_index(prices)
         _log(f"Benchmark: synthetic equal-weight '{args.segment}' universe.")
 
     # Cap_Tilt base weights: cap-weight share of each universe country,
@@ -814,9 +992,24 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
             f"{cfg.backtest.active_share:.2f})."
         )
 
+    # Optional per-country cost model (--costs): one-way spread+commission
+    # bps per universe country, threaded through EVERY Engine construction.
+    cost_model = None
+    cost_bps = None
+    if args.costs is not None:
+        from country_rotation.backtest.tca import load_cost_model
+
+        cost_model = load_cost_model(args.costs)
+        cost_bps = cost_model.cost_vector(universe)
+        _log(
+            f"Cost model '{args.costs}' (as_of {cost_model.as_of}): one-way "
+            f"bps min={cost_bps.min():g} / max={cost_bps.max():g} across "
+            f"{len(cost_bps)} countries."
+        )
+
     cfg_bt = dataclasses.replace(
         cfg.backtest,
-        bmk=args.segment,
+        bmk=bmk_col,
         bmk_weight=args.bmk_weight,
         mode=args.mode,
         periodicity=args.periodicity,
@@ -854,10 +1047,14 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         tag += "_S5"
     if args.construction == "cap_tilt":
         tag += "_captilt"
-    if args.bmk_source == "index":
+    if args.bmk_index is not None:
+        tag += f"_vs{args.bmk_index}"
+    elif args.bmk_source == "index":
         tag += "_capbmk"
     if args.mode == "blend":
         tag += f"_blend{int(round(args.bmk_weight * 100))}"
+    if args.costs is not None:
+        tag += "_tca"
     verdict_path = os.path.join(args.output_dir, f"verdict_{tag}.json")
     screen_result = None
     prior_evidence = None
@@ -980,7 +1177,38 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         seed=42,
         basis=args.basis,
         base_weights=base_weights,
+        cost_bps=cost_bps,
     )
+
+    # ------------------------------------------------------------------
+    # 6b. TCA: net-of-cost evidence (--costs only)
+    # ------------------------------------------------------------------
+    cost_model_summary = None
+    tca_block = None
+    stats_net = None
+    if cost_model is not None:
+        from country_rotation.backtest.engine import Engine
+
+        _log("Computing TCA (turnover, cost layers, breakeven, net stats) ...")
+        engine_result = Engine(
+            normalized, prices_with_bmk, cfg_bt,
+            base_weights=base_weights, cost_bps=cost_bps,
+        ).run()
+        tca_info = compute_tca_block(
+            engine_result, cost_model, args.segment, validation_report,
+            n_boot=n_boot, seed=42, bmk=cfg_bt.bmk,
+        )
+        tca_block = tca_info["tca"]
+        stats_net = tca_info["stats_net"]
+        cost_model_summary = {
+            "path": args.costs,
+            "as_of": cost_model.as_of,
+            "ann_spread_bps": tca_block["cost_layers_ann_bps"]["spread"],
+            "ann_commission_bps": (
+                tca_block["cost_layers_ann_bps"]["commission"]
+            ),
+            "breakeven_bps": tca_block["breakeven_bps"],
+        }
 
     # ------------------------------------------------------------------
     # 7. Report + verdict JSON
@@ -995,6 +1223,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         validation_report=validation_report,
         contributions=contributions,
         base_weights=base_weights,
+        cost_bps=cost_bps,
     )
     _log(f"Report -> {report_info['path']} ({report_info['n_figures']} figures)")
 
@@ -1035,6 +1264,9 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         mandate_stats=mandate_stats,
         composite_ic=composite_ic,
         active_share=cfg_bt.active_share,
+        cost_model_summary=cost_model_summary,
+        tca_block=tca_block,
+        stats_net=stats_net,
     )
     with open(verdict_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)

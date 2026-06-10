@@ -1,0 +1,27 @@
+{
+  "as_of_note": "Deployed strategies per docs/research/final_evidence_dossier.md",
+  "strategies": [
+    {
+      "id": "EM_captilt_vsEM",
+      "label": "EM Cap-Tilt vs MSCI EM (selection-skill candidate)",
+      "segment": "EM",
+      "prior_set": "vm",
+      "periodicity": 63,
+      "construction": "cap_tilt",
+      "active_share": 0.30,
+      "bmk_index": null,
+      "note": "Benchmark = vendor EM index (MSCI EM equivalent). MC p 0.030."
+    },
+    {
+      "id": "DM_captilt_vsACWI",
+      "label": "DM Cap-Tilt vs ACWI (composition bet + neutral overlay)",
+      "segment": "DM",
+      "prior_set": "vm",
+      "periodicity": 63,
+      "construction": "cap_tilt",
+      "active_share": 0.30,
+      "bmk_index": "World",
+      "note": "Benchmark = vendor World index (ACWI equivalent). Alpha attribution: passive DM-ACWI spread (NW t 2.39), selection overlay ~0. Position, not selection alpha."
+    }
+  ]
+}
