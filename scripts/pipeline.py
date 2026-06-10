@@ -22,6 +22,17 @@ Usage
     python scripts/pipeline.py production [--quick] [--dry-run]
     python scripts/pipeline.py recert [--quick] [--no-costs] [--dry-run]
     python scripts/pipeline.py dashboards [--dry-run]
+    python scripts/pipeline.py calendar [--periods 8]
+
+``--strategy ID`` restricts recert/production/quarterly to ONE deployed
+strategy (e.g. ``--strategy EM_captilt_vsEM``); the dashboards stage always
+rebuilds from whatever artifacts exist.
+
+``calendar`` prints the forward rebalance schedule per deployed strategy,
+anchored on the latest production run's ``allocations_latest.json`` and
+stepped by the engine convention (periodicity business days). Dates beyond
+the first are approximations — market holidays shift the trading-day grid;
+the authoritative next date is re-emitted by every production run.
 
 ``--dry-run`` validates the registry + required inputs and prints the exact
 commands without executing anything. Stages run sequentially and stop at the
@@ -38,6 +49,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import date
 
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_SCRIPTS_DIR)
@@ -138,8 +150,10 @@ def recert_command(entry: dict, quick: bool, costs: str | None) -> list[str]:
     return cmd
 
 
-def production_command(quick: bool) -> list[str]:
+def production_command(quick: bool, strategy: str | None = None) -> list[str]:
     cmd = [sys.executable, os.path.join(_SCRIPTS_DIR, "production_run.py")]
+    if strategy:
+        cmd += ["--strategy", strategy]
     if quick:
         cmd.append("--quick")
     return cmd
@@ -204,6 +218,7 @@ def build_steps(
     strategies: list[dict],
     quick: bool,
     costs: str | None,
+    strategy: str | None = None,
 ) -> list[tuple[str, list[str]]]:
     """Assemble the (label, argv) sequence for a stage."""
     steps: list[tuple[str, list[str]]] = []
@@ -213,12 +228,71 @@ def build_steps(
                 (f"recert:{entry['id']}", recert_command(entry, quick, costs))
             )
     if stage in ("production", "quarterly"):
-        steps.append(("production", production_command(quick)))
+        steps.append(("production", production_command(quick, strategy)))
     if stage in ("dashboards", "quarterly"):
         for cmd in dashboard_commands():
             name = os.path.splitext(os.path.basename(cmd[1]))[0]
             steps.append((f"dashboard:{name}", cmd))
     return steps
+
+
+# ---------------------------------------------------------------------------
+# Rebalance calendar
+# ---------------------------------------------------------------------------
+
+def latest_run_dir(repo_root: str | None = None) -> str:
+    root = repo_root if repo_root is not None else _REPO_ROOT
+    base = os.path.join(root, "outputs", "production")
+    runs = sorted(
+        d for d in (os.listdir(base) if os.path.isdir(base) else [])
+        if d.startswith("run_")
+    )
+    if not runs:
+        raise SystemExit(
+            "[pipeline] ERROR: no production run found under "
+            "outputs/production — run 'pipeline.py production' first."
+        )
+    return os.path.join(base, runs[-1])
+
+
+def rebalance_schedule(
+    last_rebalance: str, periodicity: int, periods: int
+) -> list[str]:
+    """Forward rebalance dates: engine convention = +periodicity business
+    days per step (no holiday calendar — same approximation production_run
+    uses for next_rebalance_date)."""
+    import pandas as pd
+
+    d = pd.Timestamp(last_rebalance)
+    out = []
+    for _ in range(periods):
+        d = d + pd.offsets.BDay(periodicity)
+        out.append(d.strftime("%Y-%m-%d"))
+    return out
+
+
+def print_calendar(
+    strategies: list[dict], periods: int, repo_root: str | None = None
+) -> None:
+    run_dir = latest_run_dir(repo_root)
+    _log(f"rebalance calendar from '{os.path.basename(run_dir)}' "
+         f"(engine convention: +periodicity business days; dates beyond the "
+         f"first are holiday-approximate)")
+    for entry in strategies:
+        path = os.path.join(run_dir, entry["id"], "allocations_latest.json")
+        if not os.path.isfile(path):
+            _log(f"  {entry['id']}: no allocations_latest.json — skipped")
+            continue
+        with open(path, encoding="utf-8") as fh:
+            latest = json.load(fh)
+        anchor = latest["rebalance_date"]
+        dates = rebalance_schedule(anchor, int(entry["periodicity"]), periods)
+        _log(f"  {entry['id']} (last rebalance {anchor}, "
+             f"every {entry['periodicity']} trading days):")
+        today = date.today().isoformat()
+        for d in dates:
+            flag = "  << OVERDUE" if d < today else ""
+            _log(f"    {d}{flag}")
 
 
 def main() -> None:
@@ -228,8 +302,19 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "stage", choices=("quarterly", "recert", "production", "dashboards"),
-        help="quarterly = recert -> production -> dashboards.",
+        "stage",
+        choices=("quarterly", "recert", "production", "dashboards", "calendar"),
+        help="quarterly = recert -> production -> dashboards; calendar = "
+             "print the forward rebalance schedule per deployed strategy.",
+    )
+    parser.add_argument(
+        "--strategy", default=None, metavar="ID",
+        help="Restrict recert/production to one deployed strategy id "
+             "(e.g. EM_captilt_vsEM).",
+    )
+    parser.add_argument(
+        "--periods", type=int, default=8,
+        help="calendar: number of forward rebalances to print (8 = ~2 years).",
     )
     parser.add_argument(
         "--registry", default=_DEFAULT_REGISTRY,
@@ -258,10 +343,21 @@ def main() -> None:
     strategies = load_registry(os.path.join(_REPO_ROOT, args.registry)
                                if not os.path.isabs(args.registry)
                                else args.registry)
+    if args.strategy:
+        strategies = [s for s in strategies if s["id"] == args.strategy]
+        if not strategies:
+            raise SystemExit(
+                f"[pipeline] ERROR: strategy '{args.strategy}' not in the "
+                "registry."
+            )
+    if args.stage == "calendar":
+        print_calendar(strategies, args.periods)
+        return
     if args.stage != "dashboards":
         check_inputs()
     costs = None if args.no_costs else args.costs
-    steps = build_steps(args.stage, strategies, args.quick, costs)
+    steps = build_steps(args.stage, strategies, args.quick, costs,
+                        strategy=args.strategy)
     run_steps(steps, args.dry_run)
 
 

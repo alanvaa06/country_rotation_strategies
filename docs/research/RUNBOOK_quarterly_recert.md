@@ -8,7 +8,12 @@ Deployed registry (`configs/production.json`), status as of 2026-06-10:
 | `DM_captilt_vsACWI` | DM Cap-Tilt vm @63d, active_share 0.30 | World (ACWI-equiv) | **Composition bet** — alpha = passive DM−ACWI spread (NW t 2.39); selection leg −0.10%/yr; never market as selection skill |
 
 ## When to run
-Each calendar quarter, after `Inputs/` is refreshed with the new quarter of vendor data. On unchanged data every artifact is bit-for-bit reproducible — re-running adds no information.
+On each rebalance date — `python scripts/pipeline.py calendar` prints the
+forward schedule (63-trading-day grid, both books; flags overdue dates;
+committed snapshot: docs/research/rebalance_calendar.md). Refresh `Inputs/`
+first. On unchanged data every artifact is bit-for-bit reproducible —
+re-running adds no information. `--strategy ID` restricts the cycle to one
+deployed book.
 
 ## The one command
 ```
