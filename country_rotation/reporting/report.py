@@ -719,6 +719,7 @@ def build_report(
     validation_report=None,
     contributions: Optional[dict] = None,
     ic_methods: tuple = ("absolute", "relative"),
+    base_weights: Optional[pd.DataFrame] = None,
 ) -> dict:
     """Build a comprehensive HTML backtest report and write it to *output_path*.
 
@@ -740,6 +741,9 @@ def build_report(
         When provided, the "Score Decomposition" section is included.
     ic_methods:
         IC methods to compute and display (tuple of 'absolute'/'relative').
+    base_weights:
+        Optional cap-weight base (dates x countries) threaded to the Engine —
+        required when ``cfg.weighting_method == 'Cap_Tilt'``.
 
     Returns
     -------
@@ -752,7 +756,7 @@ def build_report(
     # ------------------------------------------------------------------
     # 1. Run engine
     # ------------------------------------------------------------------
-    engine_result = Engine(scores, prices, cfg).run()
+    engine_result = Engine(scores, prices, cfg, base_weights=base_weights).run()
 
     # ------------------------------------------------------------------
     # 2. Equal-weight null (country columns only)

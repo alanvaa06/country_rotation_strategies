@@ -18,6 +18,7 @@
     "mode": "blend",
     "periodicity": 63,
     "transaction_cost_bps": 2.0,
-    "execution_lag_days": 0
+    "execution_lag_days": 0,
+    "active_share": 0.30
   }
 }

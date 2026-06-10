@@ -110,6 +110,7 @@ class Engine:
         normalized_score: pd.DataFrame,
         prices: pd.DataFrame,
         cfg: BacktestConfig,
+        base_weights: pd.DataFrame | None = None,
     ) -> None:
         self.normalized_score = normalized_score.copy()
         self.prices = prices.copy()
@@ -117,6 +118,10 @@ class Engine:
         self.selection_criteria = cfg.selection_criteria.lower()
         self.bmk = cfg.bmk
         self.transaction_cost_decimal = cfg.transaction_cost_bps / 10000.0
+        # Cap_Tilt only: dates x countries cap-weight base (rows ~sum to 1).
+        self.base_weights = (
+            base_weights.sort_index().copy() if base_weights is not None else None
+        )
 
         self._validate_inputs()
 
@@ -136,8 +141,17 @@ class Engine:
         """Replicates legacy ``_validate_inputs`` (~126-151) + mode check."""
         if self.selection_criteria not in ("absolute", "relative"):
             raise ValueError("selection_criteria must be 'absolute' or 'relative'")
-        if self.cfg.weighting_method not in ("Equal", "Risk_Parity"):
-            raise ValueError("weighting_method must be 'Equal' or 'Risk_Parity'")
+        if self.cfg.weighting_method not in ("Equal", "Risk_Parity", "Cap_Tilt"):
+            raise ValueError(
+                "weighting_method must be 'Equal', 'Risk_Parity' or 'Cap_Tilt'"
+            )
+        if self.cfg.weighting_method == "Cap_Tilt":
+            if self.cfg.mode != "active":
+                raise ValueError("Cap_Tilt weighting requires mode='active'")
+            if self.base_weights is None:
+                raise ValueError("Cap_Tilt weighting requires base_weights")
+            if not 0.0 < self.cfg.active_share <= 1.0:
+                raise ValueError("active_share must be in (0, 1]")
         if not 0 <= self.cfg.bmk_weight <= 1:
             raise ValueError("bmk_weight must be between 0 and 1")
         if self.bmk not in self.prices.columns:
@@ -188,20 +202,27 @@ class Engine:
         scores = scores.dropna()
         return scores[scores > self.cfg.absolute_selection_score].index.tolist()
 
-    def _select_relative(self, d_sel) -> list:
-        """Legacy ``_select_relative`` (~346-380): top N by score change."""
+    def _relative_signal(self, d_sel) -> pd.Series:
+        """Signal series behind ``_select_relative``: score change over
+        ``periodicity`` index rows, falling back to score level when no
+        previous date exists.  Extracted so Cap_Tilt can rank top AND
+        bottom names from the same series; ``_select_relative`` output is
+        bit-identical to the pre-refactor code."""
         d_prev = self._get_previous_date(d_sel, self.cfg.periodicity)
 
         if d_prev is None or d_prev not in self.normalized_score.index:
-            # No previous date: fall back to top N by score level.
+            # No previous date: fall back to score level.
             scores_current = self.normalized_score.loc[d_sel, self.countries]
-            scores_current = scores_current.dropna()
-            return scores_current.nlargest(self.cfg.relative_selection_score).index.tolist()
+            return scores_current.dropna()
 
         scores_current = self.normalized_score.loc[d_sel, self.countries]
         scores_prev = self.normalized_score.loc[d_prev, self.countries]
-        score_change = (scores_current - scores_prev).dropna()
-        return score_change.nlargest(self.cfg.relative_selection_score).index.tolist()
+        return (scores_current - scores_prev).dropna()
+
+    def _select_relative(self, d_sel) -> list:
+        """Legacy ``_select_relative`` (~346-380): top N by score change."""
+        signal = self._relative_signal(d_sel)
+        return signal.nlargest(self.cfg.relative_selection_score).index.tolist()
 
     # ------------------------------------------------------------------
     # weighting
@@ -291,6 +312,90 @@ class Engine:
         if not np.isclose(total_weight, 1.0, atol=1e-6):
             raise ValueError(f"Weights do not sum to 1.0: {total_weight}")
         return blended_weights
+
+    # ------------------------------------------------------------------
+    # Cap_Tilt weighting (benchmark-aware construction; active mode only)
+    # ------------------------------------------------------------------
+    def _cap_tilt_base(self, d_sel) -> Optional[pd.Series]:
+        """Cap-weight base for ``d_sel``: last base_weights row at or
+        before ``d_sel``, restricted to countries with a valid score AND a
+        valid price at ``d_sel``, NaN/negative entries dropped, renormalized
+        to sum 1.  Returns None when no usable base exists (caller falls
+        back to the previous period's weights)."""
+        history = self.base_weights.loc[:d_sel]
+        if len(history) == 0:
+            return None
+        if d_sel not in self.normalized_score.index or d_sel not in self.prices.index:
+            return None
+        base = history.iloc[-1]
+        scores_row = self.normalized_score.loc[d_sel]
+        prices_row = self.prices.loc[d_sel]
+        cols = [
+            c for c in base.index
+            if c in self.countries
+            and pd.notna(base[c]) and base[c] >= 0.0
+            and c in scores_row.index and pd.notna(scores_row[c])
+            and c in prices_row.index and pd.notna(prices_row[c])
+        ]
+        base = base[cols].astype(float)
+        total = base.sum()
+        if not total > 0.0:
+            return None
+        return base / total
+
+    def _selection_signal(self, d_sel) -> pd.Series:
+        """One signal series for Cap_Tilt top AND bottom ranking.
+
+        'relative' -> the exact ``_select_relative`` signal (score change,
+        score-level fallback).  'absolute' -> score level at ``d_sel``
+        (the series behind the threshold rule), so the bottom set is the
+        symmetric mirror: lowest score levels."""
+        if d_sel not in self.normalized_score.index:
+            return pd.Series(dtype=float)
+        if self.selection_criteria == "absolute":
+            return self.normalized_score.loc[d_sel, self.countries].dropna()
+        return self._relative_signal(d_sel)
+
+    def _signal_top(self, signal: pd.Series) -> list:
+        """Top names from the signal series — mirrors the existing
+        selection rules: 'relative' = top N, 'absolute' = level > threshold."""
+        if self.selection_criteria == "absolute":
+            return signal[signal > self.cfg.absolute_selection_score].index.tolist()
+        return signal.nlargest(self.cfg.relative_selection_score).index.tolist()
+
+    def _construct_cap_tilt_weights(self, d_sel, previous_weights: dict) -> dict:
+        """Cap-index base +/- score tilts; fully invested, long-only.
+
+        * tilt_unit = active_share / N (N = number of top names).
+        * bottom-N underweight_i = min(tilt_unit, base_i) — long-only clip.
+        * each top name gets total_under / N, so the sum stays exactly 1.
+        * no usable base row -> hold the previous period's weights.
+        """
+        base = self._cap_tilt_base(d_sel)
+        if base is None:
+            return dict(previous_weights)
+
+        signal = self._selection_signal(d_sel)
+        # Tilt only investable names: restrict to the base universe.
+        signal = signal[signal.index.intersection(base.index)]
+
+        weights = {c: float(w) for c, w in base.items()}
+        top = self._signal_top(signal)
+        if len(top) == 0:
+            return weights  # nothing selected: hold the cap base untouched
+
+        bottom = signal.drop(labels=top).nsmallest(len(top)).index.tolist()
+        tilt_unit = self.cfg.active_share / len(top)
+
+        total_under = 0.0
+        for c in bottom:
+            under = min(tilt_unit, weights[c])
+            weights[c] -= under
+            total_under += under
+        over = total_under / len(top)
+        for c in top:
+            weights[c] += over
+        return weights
 
     # ------------------------------------------------------------------
     # turnover / returns
@@ -425,13 +530,17 @@ class Engine:
 
         previous_weights: dict = {}
         for d_sel, d_ret in date_tuples:
-            selected_countries = self._select_countries(d_sel)
-            active_weights = self._construct_active_weights(selected_countries, d_sel)
+            if self.cfg.weighting_method == "Cap_Tilt":
+                # Benchmark-aware book: cap base +/- score tilts (active only).
+                weights = self._construct_cap_tilt_weights(d_sel, previous_weights)
+            else:
+                selected_countries = self._select_countries(d_sel)
+                active_weights = self._construct_active_weights(selected_countries, d_sel)
 
-            if self.cfg.mode == "blend":
-                weights = self._construct_blended_weights(active_weights)
-            else:  # 'active': no benchmark row, bmk_weight ignored.
-                weights = dict(active_weights)
+                if self.cfg.mode == "blend":
+                    weights = self._construct_blended_weights(active_weights)
+                else:  # 'active': no benchmark row, bmk_weight ignored.
+                    weights = dict(active_weights)
 
             turnover_result = self._calculate_turnover(weights, previous_weights)
             turnover = turnover_result["turnover"]

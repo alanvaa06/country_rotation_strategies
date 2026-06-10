@@ -21,7 +21,7 @@ class BacktestConfig:
     selection_criteria: str = "relative"       # 'absolute' | 'relative'
     absolute_selection_score: float = 0.75
     relative_selection_score: int = 5
-    weighting_method: str = "Equal"            # 'Equal' | 'Risk_Parity'
+    weighting_method: str = "Equal"            # 'Equal' | 'Risk_Parity' | 'Cap_Tilt'
     risk_parity_lookback: int = 120
     bmk: str = "World"
     bmk_weight: float = 0.5
@@ -29,6 +29,7 @@ class BacktestConfig:
     periodicity: int = 63
     transaction_cost_bps: float = 2.0
     execution_lag_days: int = 0
+    active_share: float = 0.30                 # Cap_Tilt total one-sided tilt budget
 
 
 @dataclass(frozen=True)

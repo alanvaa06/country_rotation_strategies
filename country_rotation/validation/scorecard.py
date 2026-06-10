@@ -188,6 +188,7 @@ def compute_validation(
     n_folds: int = 5,
     seed: int = 0,
     basis: str = "absolute",
+    base_weights: pd.DataFrame | None = None,
 ) -> ValidationReport:
     """Run the full validation suite and assemble a :class:`ValidationReport`.
 
@@ -226,6 +227,11 @@ def compute_validation(
         either mode — it is already an active comparison.  ``walk_forward``
         stays on the absolute basis in both modes: it is the OOS-consistency
         gate and selects on IS net Sharpe; converting it is out of scope.
+    base_weights :
+        Optional cap-weight base (dates x countries) threaded to the Engine
+        run, the parameter sweep, the walk-forward (sliced with the same
+        masks as prices) and the Monte-Carlo null — required when
+        ``cfg.weighting_method == 'Cap_Tilt'``.
 
     Returns
     -------
@@ -234,7 +240,7 @@ def compute_validation(
     # ------------------------------------------------------------------
     # 1. Run strategy engine; build the headline equity for the basis
     # ------------------------------------------------------------------
-    result = Engine(scores, prices, cfg).run()
+    result = Engine(scores, prices, cfg, base_weights=base_weights).run()
     net_returns = result.period_results["portfolio_return_net"].dropna()
 
     # Daily strategy returns (None if engine produced no daily curve)
@@ -280,7 +286,9 @@ def compute_validation(
     # ------------------------------------------------------------------
     # 3. Parameter sweep + stability + DSR (trial sharpes from sweep table)
     # ------------------------------------------------------------------
-    sweep = parameter_sweep(scores, prices, cfg, grid, basis=basis)
+    sweep = parameter_sweep(
+        scores, prices, cfg, grid, basis=basis, base_weights=base_weights
+    )
     stability = stability_summary(sweep, cfg)
 
     trial_sharpes = sweep.table["sharpe_daily"].to_numpy(dtype=float)
@@ -291,8 +299,13 @@ def compute_validation(
     # ------------------------------------------------------------------
     # 4. Walk-forward, Monte-Carlo null, PSR, Sharpe significance, bootstrap
     # ------------------------------------------------------------------
-    wf = walk_forward(scores, prices, cfg, grid, n_folds=n_folds)
-    mc = monte_carlo_null(scores, prices, cfg, n_sims=n_mc, seed=seed, basis=basis)
+    wf = walk_forward(
+        scores, prices, cfg, grid, n_folds=n_folds, base_weights=base_weights
+    )
+    mc = monte_carlo_null(
+        scores, prices, cfg, n_sims=n_mc, seed=seed, basis=basis,
+        base_weights=base_weights,
+    )
     psr = probabilistic_sharpe_ratio(equity, benchmark_sharpe=0.0)
     sharpe = sharpe_significance(equity)
     bootstrap = bootstrap_sharpe_ci(equity, n_boot=n_boot, seed=seed)
