@@ -7,17 +7,24 @@ false-discovery-rate test, labels survivors with a raw |t| < 3 "weak" flag
 NEVER reads.  :func:`verify_on_lockbox` is the single, one-shot evaluation
 of kept factors on that lockbox.
 
-Statistical honesty note
-------------------------
-The per-factor p-value is a one-sided t-test on the *fold-mean* ICs.
-Anchored expanding folds overlap (fold k's window contains fold k-1's), so
-the fold means are NOT independent observations and the t-test treats them
-as if they were — the effective sample size is smaller than ``n_folds`` and
-the t-statistic is optimistic.  This is a known, deliberate approximation:
-the sign-consistency and positive-mean gates are blunt instruments that
-mitigate it, and the BH-FDR adjustment plus the HLZ |t| >= 3 bar for the
-"non-weak" label add further conservatism.  Treat ``bh_qvalues`` as a
-screening heuristic, not a calibrated error rate.
+Statistical power rationale
+---------------------------
+The per-factor p-value comes from a t-test on the **full per-period IC series**
+over the entire screening window (df = n_periods - 1 instead of n_folds - 1 = 4).
+With monthly periodicity and a multi-year screening window this gives df = 50-150+
+rather than 4, yielding dramatically better statistical power (the "Grinold-Kahn"
+approach: treat each IC observation as approximately i.i.d. under the null).
+
+Overlapping-window caveat: the per-period ICs are computed on the full screening
+window (not chunked by fold), so they are NOT anchored-expanding — consecutive IC
+observations use overlapping data.  This makes the t-test *optimistic* relative to
+a block-bootstrap, but far *less* optimistic than the 5-fold version it replaces
+(where 5 correlated fold means masqueraded as 5 independent observations).  The
+remaining regime-robustness guard (sign consistency across anchored folds) mitigates
+the optimism at the cost of some power on factors with time-varying signal.
+
+The fold columns are still computed and reported in ``fold_ic`` for the
+sign-consistency regime-robustness gate; they are NOT used for the p-value.
 
 Pure numpy/pandas/scipy; no IO; deterministic. All results are frozen
 dataclasses.
@@ -31,11 +38,15 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from country_rotation.backtest import ic
+from country_rotation.backtest import ic as ic_module
 
 #: Harvey, Liu & Zhu (2016) hurdle: kept factors with raw |t| below this
 #: are labelled "weak" rather than trusted.
 HLZ_T_THRESHOLD = 3.0
+
+#: Minimum number of per-period IC observations required to compute a
+#: meaningful t-stat; series shorter than this receive p=1.0.
+MIN_IC_OBS = 8
 
 
 # ---------------------------------------------------------------------------
@@ -52,16 +63,25 @@ class FactorScreenResult:
     fold_ic : pd.DataFrame
         Rows = factor names, columns = ``fold_1 .. fold_k``; each cell is
         the mean IC of that factor on that (train-only) anchored fold.
+        Used for the sign-consistency regime-robustness gate only; NOT used
+        to compute p-values (see ``series_t``).
     kept : tuple
         Factors passing all gates (positive mean, sign consistency, BH-FDR).
     weak : tuple
-        Subset of ``kept`` whose raw fold-mean t-stat has ``|t| <`` the HLZ
+        Subset of ``kept`` whose IC-series t-stat has ``|t| <`` the HLZ
         threshold of 3.0 — statistically fragile survivors.
     dropped : tuple
         Factors failing at least one gate (``kept + dropped`` partitions
         the input).
     bh_qvalues : dict
         Factor name -> Benjamini-Hochberg adjusted q-value.
+    series_t : dict
+        Factor name -> t-statistic from the per-period IC series
+        (df = n_ic_obs - 1).  This is the stat used for BH p-values and the
+        HLZ weak label; it has far more power than the old fold-mean t-test.
+    n_ic_obs : dict
+        Factor name -> number of non-NaN IC observations in the screening
+        window used to compute ``series_t``.
     lockbox_ic : dict | None
         ``None`` after screening; filled (kept factors only) by
         :func:`verify_on_lockbox`.
@@ -72,6 +92,8 @@ class FactorScreenResult:
     weak: tuple
     dropped: tuple
     bh_qvalues: dict
+    series_t: dict
+    n_ic_obs: dict
     lockbox_ic: dict | None
 
 
@@ -148,38 +170,51 @@ def _mean_ic(
     """Mean Spearman IC of one factor over one date slice (NaN if empty)."""
     if len(dates) == 0:
         return float("nan")
-    out = ic.information_coefficient(
+    out = ic_module.information_coefficient(
         factor.loc[dates], prices.loc[dates], periodicity, method="absolute"
     )
     series = out["IC"].dropna() if "IC" in out.columns else pd.Series(dtype=float)
     return float(series.mean()) if len(series) else float("nan")
 
 
-def _fold_pvalue(fold_means: np.ndarray) -> tuple:
-    """One-sided t-test that the mean of fold-mean ICs exceeds zero.
+def _series_pvalue(ic_series: pd.Series) -> tuple:
+    """One-sided t-test on the full per-period IC series (df = n-1).
 
-    Returns ``(t_stat, p_value)``.  NaN fold means are dropped.  Degenerate
-    cases (< 2 valid folds, non-finite std) return ``(nan, 1.0)``.  A zero
-    std splits by sign: a strictly positive constant fold-mean vector is
-    unanimous evidence for the factor (``t=+inf, p=0.0`` — e.g. a signal
-    with Spearman IC exactly 1 every period), while a non-positive constant
-    carries no supporting evidence (``p=1.0``).
-    See the module docstring: overlapping anchored folds make this an
-    optimistic approximation, mitigated by the other gates.
+    Returns ``(t_stat, p_value, n_obs)``.
+
+    Power rationale
+    ~~~~~~~~~~~~~~~
+    Using n_periods - 1 degrees of freedom (where n_periods is the number of
+    non-NaN IC observations over the entire screening window) gives df = 50-150+
+    for typical multi-year screens at monthly periodicity — compared to df = 4
+    from the old fold-mean t-test.  This is the Grinold-Kahn approach.
+
+    Degenerate cases:
+      - n < MIN_IC_OBS (8): too few observations → p = 1.0.
+      - std == 0 with mean <= 0: no evidence → p = 1.0.
+      - std == 0 with mean > 0: unanimous positive signal → p = 0.0.
+      - std is non-finite: p = 1.0.
     """
-    valid = fold_means[np.isfinite(fold_means)]
-    if len(valid) < 2:
-        return float("nan"), 1.0
-    sd = valid.std(ddof=1)
-    if not np.isfinite(sd):
-        return float("nan"), 1.0
-    if sd == 0.0:
-        if valid.mean() > 0.0:
-            return float("inf"), 0.0
-        return float("nan"), 1.0
-    t = float(valid.mean() / (sd / np.sqrt(len(valid))))
-    p = float(1.0 - stats.t.cdf(t, df=len(valid) - 1))
-    return t, p
+    clean = ic_series.dropna()
+    n = len(clean)
+
+    if n < MIN_IC_OBS:
+        return float("nan"), 1.0, n
+
+    mean_val = float(clean.mean())
+    std_val = float(clean.std(ddof=1))
+
+    if not np.isfinite(std_val):
+        return float("nan"), 1.0, n
+
+    if std_val == 0.0:
+        if mean_val > 0.0:
+            return float("inf"), 0.0, n
+        return float("nan"), 1.0, n
+
+    t = mean_val / (std_val / np.sqrt(n))
+    p = float(1.0 - stats.t.cdf(t, df=n - 1))
+    return float(t), p, n
 
 
 # ---------------------------------------------------------------------------
@@ -204,19 +239,39 @@ def screen_factors(
     1. ``dates`` = common index of all factors intersected with
        ``prices.index`` (sorted).  The last ``floor(lockbox_frac * n)``
        dates form the lockbox and are EXCLUDED from every step below.
-    2. Anchored expanding folds over the remaining screen dates: fold ``k``
-       (1-based) trains on ``screen_dates[: int(len * k / n_folds)]``.
-       Per factor and fold, the mean Spearman IC is computed with
+    2. **Per-period IC series** (power gate): for each factor, compute the
+       full Spearman IC series over all of ``screen_dates`` using
        :func:`country_rotation.backtest.ic.information_coefficient`
-       (``method='absolute'``).
-    3. Gates (all must pass to be kept):
-       (a) mean of fold-mean ICs > ``min_mean_ic`` (default 0);
+       (``method='absolute'``).  The t-statistic
+       ``t = mean(IC) / (std(IC) / sqrt(n))`` has df = n-1 where n is the
+       number of non-NaN IC observations.  This is the Grinold-Kahn
+       statistic — with monthly periodicity over a 3-year+ screening window
+       df ≈ 30-150, vastly more powerful than the old df=4 fold-mean test.
+    3. **Anchored fold means** (regime-robustness gate): fold ``k`` (1-based)
+       trains on ``screen_dates[: int(len * k / n_folds)]``.  Per factor and
+       fold, the mean Spearman IC is computed.  These fold means are used
+       ONLY for the sign-consistency gate (step 4b) and are reported in
+       ``fold_ic`` for diagnostics.  They do NOT contribute to the p-value.
+    4. Gates (all must pass to be kept):
+       (a) mean of the per-period IC series > ``min_mean_ic`` (default 0);
        (b) sign consistency ``frac(fold mean > 0) >= min_sign_consistency``
-           (NaN folds count as failures);
+           (NaN folds count as failures) — regime-robustness guard;
        (c) BH-FDR: adjusted q <= ``fdr_q`` (``fdr_q / 2`` for factors in
            ``exploratory`` — data-mined candidates get a stricter bar).
-    4. Kept factors with raw ``|t| <`` :data:`HLZ_T_THRESHOLD` are
-       additionally labelled ``weak``.
+    5. Kept factors with raw IC-series ``|t| <`` :data:`HLZ_T_THRESHOLD`
+       are additionally labelled ``weak``.
+
+    Statistical notes
+    ~~~~~~~~~~~~~~~~~
+    * The per-period IC series uses the full screening window (not expanding
+      folds), so consecutive observations are based on overlapping data.
+      The t-test assumes approximate i.i.d. ICs; for monthly periodicity with
+      autocorrelated IC this is optimistic, but substantially less so than
+      treating 5 correlated fold means as 5 independent observations.
+    * The sign-consistency gate (folds still computed as before) provides a
+      regime-robustness check that is insensitive to the IC-series
+      autocorrelation issue.
+    * The BH-FDR adjustment corrects for the number of factors tested.
 
     Parameters
     ----------
@@ -228,7 +283,8 @@ def screen_factors(
     periodicity :
         IC grid step in index rows (21 = monthly).
     n_folds :
-        Number of anchored expanding folds.
+        Number of anchored expanding folds (used ONLY for sign-consistency
+        regime-robustness gate; not used for p-value computation).
     lockbox_frac :
         Fraction of the common dates reserved (at the end) as the lockbox.
     min_sign_consistency :
@@ -238,16 +294,15 @@ def screen_factors(
     exploratory :
         Factor names held to the stricter ``fdr_q / 2`` bar.
     min_mean_ic :
-        Minimum required mean of fold-mean ICs for gate (a).  Default 0.0
-        (any positive mean passes).  Setting to e.g. 0.5 requires the
-        cross-fold average IC to exceed 0.5; 1.5 is impossible (IC ≤ 1),
-        so all factors are dropped.
+        Minimum required mean IC (from the per-period IC series) for gate (a).
+        Default 0.0 (any positive mean passes).
 
     Returns
     -------
     FactorScreenResult
         With ``lockbox_ic=None`` — only :func:`verify_on_lockbox` may open
-        the lockbox.
+        the lockbox.  ``series_t`` and ``n_ic_obs`` are populated for every
+        factor.
     """
     if not factor_scores:
         raise ValueError("factor_scores must contain at least one factor")
@@ -255,8 +310,21 @@ def screen_factors(
 
     screen_dates, _ = _split_dates(factor_scores, prices, lockbox_frac)
     n_screen = len(screen_dates)
-    fold_ends = [int(n_screen * k / n_folds) for k in range(1, n_folds + 1)]
 
+    # ------------------------------------------------------------------
+    # Step 1: per-period IC series over the FULL screening window
+    # ------------------------------------------------------------------
+    ic_series_map: dict = {}
+    for name, factor in factor_scores.items():
+        ic_df = ic_module.information_coefficient(
+            factor.loc[screen_dates], prices.loc[screen_dates], periodicity, "absolute"
+        )
+        ic_series_map[name] = ic_df["IC"].dropna() if "IC" in ic_df.columns else pd.Series(dtype=float)
+
+    # ------------------------------------------------------------------
+    # Step 2: anchored fold means (regime-robustness gate only)
+    # ------------------------------------------------------------------
+    fold_ends = [int(n_screen * k / n_folds) for k in range(1, n_folds + 1)]
     fold_cols = [f"fold_{k}" for k in range(1, n_folds + 1)]
     fold_rows = {
         name: [
@@ -268,29 +336,44 @@ def screen_factors(
     fold_ic = pd.DataFrame.from_dict(fold_rows, orient="index", columns=fold_cols)
     fold_ic = fold_ic.astype(float)
 
-    tstats: dict = {}
+    # ------------------------------------------------------------------
+    # Step 3: t-stats and p-values from the per-period IC series
+    # ------------------------------------------------------------------
+    series_t: dict = {}
+    n_ic_obs: dict = {}
     pvalues: dict = {}
     for name in factor_scores:
-        t, p = _fold_pvalue(fold_ic.loc[name].to_numpy(dtype=float))
-        tstats[name] = t
+        t, p, n_obs = _series_pvalue(ic_series_map[name])
+        series_t[name] = t
+        n_ic_obs[name] = n_obs
         pvalues[name] = p
 
     bh_qvalues = benjamini_hochberg(pvalues, fdr_q)
 
+    # ------------------------------------------------------------------
+    # Step 4: apply gates
+    # ------------------------------------------------------------------
     kept_list: list = []
     weak_list: list = []
     for name in factor_scores:
+        ic_ser = ic_series_map[name]
         fold_means = fold_ic.loc[name].to_numpy(dtype=float)
-        valid = fold_means[np.isfinite(fold_means)]
+        valid_folds = fold_means[np.isfinite(fold_means)]
 
-        mean_positive = len(valid) > 0 and float(valid.mean()) > min_mean_ic
-        sign_consistency = float((valid > 0.0).sum()) / n_folds  # NaN folds fail
+        # Gate (a): positive mean IC from the per-period series
+        series_mean = float(ic_ser.mean()) if len(ic_ser) > 0 else float("nan")
+        mean_positive = np.isfinite(series_mean) and series_mean > min_mean_ic
+
+        # Gate (b): sign consistency across anchored folds (regime robustness)
+        sign_consistency = float((valid_folds > 0.0).sum()) / n_folds  # NaN folds fail
+
+        # Gate (c): BH-FDR
         q_bar = fdr_q / 2.0 if name in exploratory else fdr_q
         fdr_pass = bh_qvalues[name] <= q_bar
 
         if mean_positive and sign_consistency >= min_sign_consistency and fdr_pass:
             kept_list.append(name)
-            if abs(tstats[name]) < HLZ_T_THRESHOLD:
+            if abs(series_t[name]) < HLZ_T_THRESHOLD:
                 weak_list.append(name)
 
     kept = tuple(kept_list)
@@ -302,6 +385,8 @@ def screen_factors(
         weak=tuple(weak_list),
         dropped=dropped,
         bh_qvalues=bh_qvalues,
+        series_t=series_t,
+        n_ic_obs=n_ic_obs,
         lockbox_ic=None,
     )
 

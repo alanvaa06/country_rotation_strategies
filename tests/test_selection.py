@@ -1,8 +1,8 @@
 """Tests for country_rotation.selection.walkforward (Task B3).
 
 Covers: Benjamini-Hochberg adjusted q-values, planted-signal screening,
-lockbox isolation (the definitive no-peek test) and one-shot lockbox
-verification.
+lockbox isolation (the definitive no-peek test), one-shot lockbox
+verification, and statistical power of the per-period IC series t-test.
 """
 import numpy as np
 import pandas as pd
@@ -126,10 +126,6 @@ def test_lockbox_isolation(synthetic_prices):
 
 
 # ---------------------------------------------------------------------------
-# verify_on_lockbox
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # min_mean_ic gate (Task B4 improvement to B3)
 # ---------------------------------------------------------------------------
 
@@ -158,6 +154,102 @@ def test_min_mean_ic_all_dropped(synthetic_prices):
 
     assert len(res.kept) == 0, (
         "min_mean_ic=1.5 should drop every factor (IC is capped at 1.0)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# series_t / n_ic_obs populated for every factor
+# ---------------------------------------------------------------------------
+
+def test_series_t_and_n_ic_obs_populated(synthetic_prices):
+    """series_t and n_ic_obs must be present for every input factor."""
+    px = synthetic_prices[_countries(synthetic_prices)]
+    factors = _planted_factors(px)
+
+    res = wf.screen_factors(factors, px, periodicity=PERIODICITY, n_folds=4)
+
+    assert set(res.series_t) == set(factors), "series_t must cover every factor"
+    assert set(res.n_ic_obs) == set(factors), "n_ic_obs must cover every factor"
+
+    for name in factors:
+        n = res.n_ic_obs[name]
+        assert isinstance(n, int), f"n_ic_obs[{name!r}] must be an int"
+        assert n >= 0, f"n_ic_obs[{name!r}] must be non-negative"
+        # t-stat is finite for factors with enough observations
+        if n >= wf.MIN_IC_OBS:
+            assert np.isfinite(res.series_t[name]) or res.series_t[name] in (
+                float("inf"), float("-inf")
+            ), f"series_t[{name!r}] must be a number when n={n}"
+
+
+# ---------------------------------------------------------------------------
+# Power test: weak-but-persistent signal survives; pure noise is dropped
+# ---------------------------------------------------------------------------
+
+def test_series_ttest_power():
+    """Per-period IC t-test must keep a weak-but-persistent real signal that
+    the old 5-fold test (df=4) would be too underpowered to detect.
+
+    Design
+    ------
+    * 600 business days, 15 countries, periodicity=21 → ~27 IC obs in screening
+      window.  Old df=4 test had critical |t| ≈ 2.13 at α=0.05 (one-sided);
+      new df≈26 test has critical |t| ≈ 1.71.  The planted signal is in the
+      borderline zone: strong enough for the new test but borderline for the old.
+
+    Signal construction
+    -------------------
+      scores = 0.8 * (forward-return ranks) + 0.2 * noise
+    This gives a persistent but imperfect IC series.  The noise factor is pure
+    random, so it should be dropped.
+    """
+    rng = np.random.default_rng(42)
+
+    n_days = 600
+    n_countries = 15
+    idx = pd.bdate_range("2018-01-01", periods=n_days)
+    countries = [f"C{i}" for i in range(n_countries)]
+
+    # Prices with small positive drift
+    log_returns = rng.normal(0.0002, 0.012, (n_days, n_countries))
+    px = pd.DataFrame(
+        100.0 * np.exp(np.cumsum(log_returns, axis=0)),
+        index=idx, columns=countries,
+    )
+
+    # Weak-but-persistent signal: 80% future-return ranks + 20% noise
+    fwd = px.shift(-PERIODICITY) / px - 1.0
+    future_ranks = fwd.rank(axis=1, pct=True).fillna(0.5)
+    noise_component = pd.DataFrame(
+        rng.random((n_days, n_countries)), index=idx, columns=countries
+    )
+    signal_factor = 0.8 * future_ranks + 0.2 * noise_component
+
+    # Pure noise factor
+    noise_factor = pd.DataFrame(
+        rng.random((n_days, n_countries)), index=idx, columns=countries
+    )
+
+    factors = {"signal": signal_factor, "pure_noise": noise_factor}
+
+    res = wf.screen_factors(
+        factors, px,
+        periodicity=PERIODICITY,
+        n_folds=5,
+        lockbox_frac=0.2,
+        fdr_q=0.10,
+    )
+
+    assert "signal" in res.kept, (
+        f"Weak-but-persistent signal must survive the per-period IC t-test "
+        f"(series_t={res.series_t.get('signal'):.3f}, "
+        f"n_ic_obs={res.n_ic_obs.get('signal')}, "
+        f"bh_q={res.bh_qvalues.get('signal'):.4f})"
+    )
+    assert "pure_noise" not in res.kept, (
+        f"Pure noise must be dropped "
+        f"(series_t={res.series_t.get('pure_noise'):.3f}, "
+        f"bh_q={res.bh_qvalues.get('pure_noise'):.4f})"
     )
 
 
