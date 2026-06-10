@@ -46,6 +46,26 @@ mechanically (certified / power-limited / weak / negative).
 3. **Alpha front-loading** — second-half IC was ~0 at deployment for both books; if fresh quarters do not improve the trailing IC, the "decayed signal" hypothesis gains.
 4. **DM book only:** re-run the alpha decomposition (`python scripts/overfit_forensics.py --segment DM --bmk-index World`) — if the selection leg turns *significantly* negative, the overlay is paying for nothing.
 
+### Regime context for monitor 1 (RoRo, advisory — never a trading trigger)
+Read the rolling-IR signal **conditional on the RoRo regime** (external model,
+outputs copied to `RoRo/`: `regimes_jm.csv` is the persistent jump-model
+classifier; segment labels `EM_Eq` / `DM_Eq`; labels are causal/no-lookahead).
+Interpretation is PER BOOK — the 2010–2025 regime-conditioned attribution
+(2026-06-10 diagnostic) found opposite patterns:
+
+| Book | Active return by lagged JM state (matched segment) | Reading |
+|---|---|---|
+| EM_captilt_vsEM | Transitional +4.9%/yr (NW t 3.6) · Risk-on ~0 · Risk-off −1.3%/yr (t −0.7) | Alpha lives in Transitional; Risk-off weakness is normal, Risk-on/Transitional weakness is the alarming kind |
+| DM_captilt_vsACWI | Risk-off +0.9%/yr · Risk-on ~0 | Active ≈ DM−ACWI spread, which pays in stress; Risk-off weakness here IS alarming (the structural hedge failing) |
+
+Caveats: tercile "Risk-off" ≈ 35% of all days by construction (relative
+state, not a tail event); use the JM labels (persistence-enforced), lagged —
+never same-day; conditional cells carry multiplicity (36 examined) — treat
+as context, not significance. This section is diagnostic only; any *trading*
+use of regimes requires its own pre-registered spec and a trial-ledger entry
+first. Diagnostic script: outputs/research/_regime_attribution.py (re-run
+after each Inputs/ + RoRo refresh).
+
 ## Do NOT
 - Lower thresholds to force a pass.
 - Switch to monthly (@21d) — pre-registered comparison degraded every stat (MC p 0.257; segment_verdicts_2026-06-09.md Addendum §1).

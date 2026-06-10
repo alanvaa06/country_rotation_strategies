@@ -1,0 +1,203 @@
+{
+  "run_date": "2026-05-26",
+  "as_of_data_date": "2026-05-26",
+  "methodology_version": "1.0.0",
+  "config_resolved": {
+    "data_path": "data.xlsx",
+    "output_dir": "outputs\\jm_run",
+    "ewma_halflife_days": 30,
+    "return_window_days": 63,
+    "tripwire_window_days": 21,
+    "tripwire_ewma_halflife_days": 10,
+    "percentile_window_years": 5,
+    "bucket_scheme": "TERCILE",
+    "min_n_per_cut": 10,
+    "direction_lookback_days": 5,
+    "external_corr_window_days": 60,
+    "external_corr_alert_threshold": 0.3,
+    "bootstrap_min_days": 252,
+    "methodology_version": "1.0.0",
+    "hmm_enabled": true,
+    "hmm_refit_interval_days": 63,
+    "hmm_min_history_days": 252,
+    "hmm_switching_variance": true,
+    "hmm_window": "expanding",
+    "jm_enabled": true,
+    "jm_jump_penalty": 50.0,
+    "jm_n_states": 3,
+    "jm_refit_interval_days": 63,
+    "jm_min_history_days": 252,
+    "jm_window": "expanding",
+    "jm_rolling_window_days": 2000,
+    "jm_continuous": true,
+    "jm_n_init": 10,
+    "jm_max_iter": 30,
+    "jm_tol": 1e-08,
+    "jm_random_seed": 0,
+    "fred_api_key": null
+  },
+  "data_fingerprint": {
+    "data_xlsx_sha256": "2df7f078161b19c543ed4d1126e0262d46425e7de109927699679fe1cf72afa6",
+    "data_xlsx_mtime": "1779906822",
+    "fred_pulled_at": "2026-06-09T04:11:47.289709",
+    "fred_VIXCLS": "3d00e33d0b4a71c080ed100b218e59468bcac46abd677ce602c479b6449ccb32",
+    "fred_BAMLC0A4CBBB": "5e46695b62fd5955b40d04d6c827253fd1ec92aba2aa6d8c9f961e46634d9d96",
+    "fred_BAMLEMCBPIOAS": "26ca29bba53a7025629f3099c76aa5b2bd5e9ed6f8d6b25a302c525703f0442b",
+    "fred_BAMLH0A0HYM2": "c9de247695e57783f23523bb0fb16c3448d6a12410924a8cd13c258e7a373dc2",
+    "fred_T10Y2Y": "2b11208471d69689743e135eba09c5c876bc5fe02c1fcced5b348238dc1a20f3"
+  },
+  "code_version": {
+    "git_sha": "ea99d9de4cc1fedaf7030f54b8a32e357f8e53cd",
+    "dirty": "true"
+  },
+  "warnings": [
+    "fi_lc: column 'Taiwan' has 1087 NaN values",
+    "fi_lc: column 'Chile' has 1087 NaN values",
+    "fi_lc: column 'DM' has 1107 NaN values",
+    "fi_lc: column 'Asia' has 134 NaN values"
+  ],
+  "regime_hmm": {
+    "global": {
+      "label": "Risk-on",
+      "p_risk_off": 4.003240158544985e-07,
+      "p_transitional": 0.01709217938201814,
+      "p_risk_on": 0.9829074202939659,
+      "confidence": 0.9829074202939659
+    },
+    "DM": {
+      "label": "Risk-on",
+      "p_risk_off": 4.6285215204026987e-07,
+      "p_transitional": 0.013087726019221764,
+      "p_risk_on": 0.9869118111286261,
+      "confidence": 0.9869118111286261
+    },
+    "EM": {
+      "label": "Risk-on",
+      "p_risk_off": 1.8314745901105896e-09,
+      "p_transitional": 0.002112942040846676,
+      "p_risk_on": 0.9978870561276787,
+      "confidence": 0.9978870561276787
+    },
+    "Equity": {
+      "label": "Risk-on",
+      "p_risk_off": 1.8991688353609834e-08,
+      "p_transitional": 0.004189939525382209,
+      "p_risk_on": 0.9958100414829293,
+      "confidence": 0.9958100414829293
+    },
+    "FI": {
+      "label": "Risk-off",
+      "p_risk_off": 0.9989789274705344,
+      "p_transitional": 0.0010210672740665195,
+      "p_risk_on": 5.2553991306503475e-09,
+      "confidence": 0.9989789274705344
+    },
+    "DM_Eq": {
+      "label": "Risk-off",
+      "p_risk_off": 0.8140228494266039,
+      "p_transitional": 0.18580423960183934,
+      "p_risk_on": 0.00017291097155670658,
+      "confidence": 0.8140228494266039
+    },
+    "EM_Eq": {
+      "label": "Risk-on",
+      "p_risk_off": 4.742072378394797e-13,
+      "p_transitional": 5.6468128634699615e-06,
+      "p_risk_on": 0.9999943531866624,
+      "confidence": 0.9999943531866624
+    },
+    "DM_FI": {
+      "label": "Transitional",
+      "p_risk_off": 0.0028347597919586623,
+      "p_transitional": 0.9938280714380553,
+      "p_risk_on": 0.003337168769986037,
+      "confidence": 0.9938280714380553
+    },
+    "EM_FI": {
+      "label": "Risk-off",
+      "p_risk_off": 0.9980687678981869,
+      "p_transitional": 0.0017712954083597212,
+      "p_risk_on": 0.00015993669345317857,
+      "confidence": 0.9980687678981869
+    },
+    "LatAm": {
+      "label": "Risk-off",
+      "p_risk_off": 0.9959817247540401,
+      "p_transitional": 0.002447901456631034,
+      "p_risk_on": 0.001570373789328485,
+      "confidence": 0.9959817247540401
+    }
+  },
+  "regime_jm": {
+    "global": {
+      "label": "Risk-on",
+      "p_risk_off": 0.0,
+      "p_transitional": 0.0,
+      "p_risk_on": 1.0,
+      "confidence": 1.0
+    },
+    "DM": {
+      "label": "Transitional",
+      "p_risk_off": 0.0,
+      "p_transitional": 1.0,
+      "p_risk_on": 0.0,
+      "confidence": 1.0
+    },
+    "EM": {
+      "label": "Risk-on",
+      "p_risk_off": 0.0,
+      "p_transitional": 0.0,
+      "p_risk_on": 1.0,
+      "confidence": 1.0
+    },
+    "Equity": {
+      "label": "Risk-on",
+      "p_risk_off": 0.0,
+      "p_transitional": 0.0,
+      "p_risk_on": 1.0,
+      "confidence": 1.0
+    },
+    "FI": {
+      "label": "Risk-off",
+      "p_risk_off": 1.0,
+      "p_transitional": 0.0,
+      "p_risk_on": 0.0,
+      "confidence": 1.0
+    },
+    "DM_Eq": {
+      "label": "Transitional",
+      "p_risk_off": 0.0,
+      "p_transitional": 1.0,
+      "p_risk_on": 0.0,
+      "confidence": 1.0
+    },
+    "EM_Eq": {
+      "label": "Risk-on",
+      "p_risk_off": 0.0,
+      "p_transitional": 0.0,
+      "p_risk_on": 1.0,
+      "confidence": 1.0
+    },
+    "DM_FI": {
+      "label": "Transitional",
+      "p_risk_off": 0.0,
+      "p_transitional": 1.0,
+      "p_risk_on": 0.0,
+      "confidence": 1.0
+    },
+    "EM_FI": {
+      "label": "Risk-off",
+      "p_risk_off": 1.0,
+      "p_transitional": 0.0,
+      "p_risk_on": 0.0,
+      "confidence": 1.0
+    },
+    "LatAm": {
+      "label": "Transitional",
+      "p_risk_off": 0.3,
+      "p_transitional": 0.7,
+      "p_risk_on": 0.0,
+      "confidence": 0.7
+    }
+  }
+}
