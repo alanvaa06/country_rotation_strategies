@@ -433,6 +433,7 @@ def build_strategy_pane(
     verdict: dict,
     contributions: Optional[dict],
     acwi_verdict: Optional[dict] = None,
+    bmk_label: Optional[str] = None,
 ) -> str:
     """Build the full HTML fragment for one (segment, strategy) pane.
 
@@ -457,6 +458,11 @@ def build_strategy_pane(
         Optional ACWI-relative verdict JSON (same strategy certified against
         the vendor World index as sole benchmark). When provided, a
         collapsible \"vs ACWI (sole benchmark)\" section is appended.
+    bmk_label:
+        Human-readable identity of the pane's PRIMARY benchmark (the one all
+        headline stats are measured against), e.g. \"Vendor EM index — MSCI
+        Emerging Markets equivalent\". Rendered as an always-visible badge
+        under the verdict banner.
 
     Returns
     -------
@@ -518,8 +524,13 @@ def build_strategy_pane(
     # ------------------------------------------------------------------
     parts: list[str] = []
 
-    # Always visible: evidence-grade banner + headline stat cards.
+    # Always visible: evidence-grade banner + benchmark identity + stat cards.
     parts.append(verdict_banner(verdict))
+    if bmk_label:
+        parts.append(
+            '<div class="bmk-badge"><strong>Benchmark:</strong> '
+            f"{bmk_label}</div>"
+        )
     parts.append(stat_cards(verdict))
 
     # --- Performance (absolute + relative) ---
@@ -634,6 +645,9 @@ h1 { font-size:1.25rem; margin-bottom:8px; padding-bottom:6px; }
         padding:12px 20px 16px; }
 /* --- Evidence-grade banner + per-gate chips --- */
 .banner { padding:8px 14px; border-radius:6px; margin:2px 0 10px 0; }
+.bmk-badge { font-size:0.8rem; color:#1e3a5f; background:#eef4fb;
+             border:1px solid #bfdbfe; border-radius:4px;
+             padding:5px 12px; margin:0 0 10px 0; }
 .grade-certified { background:#d1fae5; border:1px solid #10b981; }
 .grade-power_limited { background:#fef3c7; border:1px solid #f59e0b; }
 .grade-weak { background:#f3f4f6; border:1px solid #9ca3af; }

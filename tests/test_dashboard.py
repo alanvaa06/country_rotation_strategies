@@ -478,8 +478,28 @@ def test_pane_sections_collapsible():
 
 
 # ---------------------------------------------------------------------------
-# "vs ACWI (sole benchmark)" section (optional, verdict-only — no figures)
+# Benchmark-identity badge + "vs ACWI (sole benchmark)" section
 # ---------------------------------------------------------------------------
+
+def test_pane_benchmark_badge():
+    from country_rotation.reporting.dashboard import build_strategy_pane
+
+    prices = _make_prices(300)
+    scores = _make_scores(prices)
+    cfg = _make_cfg()
+    verdict = _fake_verdict(overall=False)
+
+    label = "Vendor <em>EM</em> index — <strong>MSCI EM equivalent</strong>"
+    html = build_strategy_pane(
+        scores, prices, cfg, None, verdict, None, bmk_label=label
+    )
+    assert 'class="bmk-badge"' in html
+    assert "MSCI EM equivalent" in html
+
+    # No label -> no badge
+    html2 = build_strategy_pane(scores, prices, cfg, None, verdict, None)
+    assert "bmk-badge" not in html2
+
 
 def test_pane_acwi_section():
     from country_rotation.reporting.dashboard import build_strategy_pane

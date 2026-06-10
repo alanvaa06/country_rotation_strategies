@@ -86,6 +86,29 @@ class StrategySpec:
         )
 
 
+#: Verified identity of each segment's vendor benchmark index column.
+#: World: regression vs DM+EM gives 0.887/0.111 weights, residual TE 0.14%/yr
+#: (MSCI ACWI's ~88/12 DM/EM split). DM: corr 0.96 with US, cap-weighted
+#: developed-markets composite (MSCI World type). EM: corr 0.83 with China vs
+#: 0.39 with US, cap-weighted emerging composite (MSCI EM type).
+BMK_IDENTITY = {
+    "World": (
+        "Vendor <em>World</em> index — <strong>MSCI ACWI equivalent</strong> "
+        "(All-Country: 88/12 DM/EM cap-weight, verified by regression, "
+        "residual TE 0.14%/yr)"
+    ),
+    "DM": (
+        "Vendor <em>DM</em> index — <strong>MSCI World equivalent</strong> "
+        "(developed markets only, US-dominated cap-weight: corr 0.96 with US)"
+    ),
+    "EM": (
+        "Vendor <em>EM</em> index — <strong>MSCI Emerging Markets "
+        "equivalent</strong> (China-heavy cap-weight: corr 0.83 with China, "
+        "0.39 with US)"
+    ),
+}
+
+
 STRATEGIES: tuple[StrategySpec, ...] = (
     StrategySpec(
         key="cap_tilt",
@@ -314,6 +337,7 @@ def main() -> None:
                     verdict,
                     seg_inputs["contributions"],
                     acwi_verdict=acwi_verdict,
+                    bmk_label=BMK_IDENTITY.get(segment),
                 ),
             )
         segments[segment] = panes
