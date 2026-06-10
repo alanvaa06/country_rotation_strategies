@@ -36,6 +36,7 @@ _ARTIFACTS = (
     "signal_history.csv",
     "signal_history_monthly.csv",
     "contributions_latest.csv",
+    "ic_series.csv",
 )
 
 
@@ -219,6 +220,15 @@ def test_produce_strategy_artifacts_end_to_end(tmp_path):
     assert metrics["turnover_ann"] is not None
     assert set(metrics["composite_ic"]) == {"absolute", "relative"}
     assert "timestamp" not in json.dumps(metrics).lower()
+
+    # ic_series.csv — per-period Spearman IC series, both methods.
+    ic_series = pd.read_csv(
+        out_dir / "ic_series.csv", index_col=0, parse_dates=True
+    )
+    assert "ic_absolute" in ic_series.columns
+    assert "ic_relative" in ic_series.columns
+    assert len(ic_series) >= 1
+    assert info["files"]["ic_series.csv"] == len(ic_series)
 
 
 def test_bmk_index_override_uses_vendor_world_column(tmp_path):

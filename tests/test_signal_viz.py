@@ -192,3 +192,43 @@ def test_signal_history_payload_empty():
     assert payload == {"dates": [], "countries": {}}
     payload = signal_history_payload(None)
     assert payload == {"dates": [], "countries": {}}
+
+
+# ---------------------------------------------------------------------------
+# fig_ic_distribution
+# ---------------------------------------------------------------------------
+
+def _ic_series(n: int = 60, seed: int = 42) -> pd.DataFrame:
+    """Synthetic IC DataFrame with a single column 'IC'."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2020-01-01", periods=n, freq="63B")
+    return pd.DataFrame({"IC": rng.normal(0.05, 0.2, n)}, index=idx)
+
+
+def test_fig_ic_distribution_png():
+    from country_rotation.reporting.signal_viz import fig_ic_distribution
+
+    ic_df = _ic_series(60)
+    b64 = fig_ic_distribution(ic_df, "Absolute (score level)")
+    assert isinstance(b64, str) and len(b64) > 0
+    assert _decodes_to_png(b64), "Expected a valid PNG output"
+
+
+def test_fig_ic_distribution_series_input():
+    """Accepts a pd.Series as well as a single-column DataFrame."""
+    from country_rotation.reporting.signal_viz import fig_ic_distribution
+
+    ic_s = _ic_series(60)["IC"]
+    b64 = fig_ic_distribution(ic_s, "Relative (63d score change)")
+    assert isinstance(b64, str) and _decodes_to_png(b64)
+
+
+def test_fig_ic_distribution_empty_returns_none():
+    from country_rotation.reporting.signal_viz import fig_ic_distribution
+
+    assert fig_ic_distribution(pd.DataFrame(), "Absolute") is None
+    assert fig_ic_distribution(None, "Absolute") is None
+    # All-NaN series
+    assert fig_ic_distribution(
+        pd.DataFrame({"IC": [float("nan"), float("nan")]}), "Absolute"
+    ) is None

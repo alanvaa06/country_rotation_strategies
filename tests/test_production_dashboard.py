@@ -143,6 +143,15 @@ def _write_strategy_artifacts(sdir: Path, sid: str, entry: dict) -> None:
     contrib.to_csv(sdir / "contributions_latest.csv",
                    index_label="category", lineterminator="\n")
 
+    # ic_series.csv — per-period Spearman IC series (both methods)
+    ic_dates = pd.bdate_range("2024-01-02", periods=20, freq="63B")
+    ic_df = pd.DataFrame({
+        "ic_absolute": rng.normal(0.03, 0.25, len(ic_dates)),
+        "ic_relative": rng.normal(0.05, 0.22, len(ic_dates)),
+    }, index=ic_dates)
+    ic_df.to_csv(sdir / "ic_series.csv", index_label="date",
+                 lineterminator="\n")
+
 
 @pytest.fixture()
 def run_dir(tmp_path: Path) -> Path:
@@ -230,8 +239,8 @@ def test_build_dashboard_structure(run_dir: Path):
     assert "100vh" in html and "overflow:hidden" in html
     assert "overflow-y:auto" in html
 
-    # >= 2 base64 PNGs per pane (ranking + allocation history)
-    assert html.count("data:image/png;base64,") >= 4
+    # >= 4 base64 PNGs per pane (ranking + allocation history + 2 IC distribution)
+    assert html.count("data:image/png;base64,") >= 8
 
 
 # ---------------------------------------------------------------------------
@@ -241,15 +250,15 @@ def test_build_dashboard_structure(run_dir: Path):
 def test_latest_signal_default_open(run_dir: Path):
     html = _build(run_dir)
 
-    # 4 collapsible sections per pane x 2 panes
-    assert html.count('<button class="sec-toggle"') == 8
-    # Latest Signal open in both panes; the other 3 sections collapsed
+    # 5 collapsible sections per pane x 2 panes (added IC Analysis)
+    assert html.count('<button class="sec-toggle"') == 10
+    # Latest Signal open in both panes; the other 4 sections collapsed
     assert html.count('aria-expanded="true"') == 2
-    assert html.count('aria-expanded="false"') == 6
+    assert html.count('aria-expanded="false"') == 8
     assert html.count('class="sec-body" style="display:block"') == 2
-    assert html.count('class="sec-body" style="display:none"') == 6
+    assert html.count('class="sec-body" style="display:none"') == 8
     for title in ("Latest Signal", "Signal Evolution", "Allocations",
-                  "Metrics Detail"):
+                  "Metrics Detail", "IC Analysis"):
         assert html.count(f'<span class="sec-title">{title}</span>') == 2
 
     # openSecs persistence pre-seeded with the open section
@@ -288,6 +297,35 @@ def test_evolution_payload_and_chips(run_dir: Path):
     assert "polyline" in html
     assert "evoToggle" in html
     assert "EVO_COLORS" in html
+
+
+# ---------------------------------------------------------------------------
+# 3b. IC Analysis section
+# ---------------------------------------------------------------------------
+
+def test_ic_analysis_section_present_with_artifacts(run_dir: Path):
+    """IC Analysis section renders with 2 distribution PNGs per pane when
+    ic_series.csv is present."""
+    html = _build(run_dir)
+
+    # Section heading present twice (once per pane)
+    assert html.count('<span class="sec-title">IC Analysis</span>') == 2
+    # At minimum 2 additional base64 PNGs beyond the 4 existing (ranking +
+    # allocation) — one per IC method per pane -> at least 8 total
+    assert html.count("data:image/png;base64,") >= 8
+
+
+def test_ic_analysis_section_absent_without_artifacts(run_dir: Path, tmp_path):
+    """IC Analysis section is omitted (no crash) when ic_series.csv is absent."""
+    # Remove ic_series.csv from both strategy dirs
+    for sid in _STRATEGY_IDS:
+        ic_path = run_dir / sid / "ic_series.csv"
+        if ic_path.exists():
+            ic_path.unlink()
+
+    html = _build(run_dir)
+    assert "IC Analysis" not in html
+    assert "Country Rotation — Production Dashboard" in html  # no crash
 
 
 # ---------------------------------------------------------------------------

@@ -551,6 +551,28 @@ def produce_strategy_artifacts(
     )
     files["contributions_latest.csv"] = len(contrib_latest)
 
+    # --- ic_series.csv (per-period Spearman IC, both methods) -----------
+    from scipy.stats import ConstantInputWarning
+
+    from country_rotation.backtest import ic as ic_module
+
+    ic_parts: list[pd.Series] = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConstantInputWarning)
+        for method, col in (("absolute", "ic_absolute"),
+                            ("relative", "ic_relative")):
+            ic_df = ic_module.information_coefficient(
+                normalized, inputs["prices"], periodicity, method
+            )
+            ic_parts.append(ic_df["IC"].rename(col))
+
+    ic_series_df = pd.concat(ic_parts, axis=1).sort_index()
+    ic_series_df.to_csv(
+        os.path.join(out_dir, "ic_series.csv"),
+        index_label="date", lineterminator="\n",
+    )
+    files["ic_series.csv"] = len(ic_series_df)
+
     top5 = weights_row.sort_values(ascending=False).head(5)
     _log(
         f"[{strategy_cfg['id']}] latest rebalance {allocations_latest['rebalance_date']}"

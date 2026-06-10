@@ -24,6 +24,7 @@ import pandas as pd
 
 __all__ = [
     "fig_allocation_history",
+    "fig_ic_distribution",
     "fig_signal_ranking",
     "signal_history_payload",
 ]
@@ -267,6 +268,128 @@ def fig_allocation_history(
         ax.margins(x=0.0)
         ax.legend(fontsize=7.5, loc="upper left", ncol=3, framealpha=0.85)
         ax.grid(True, alpha=0.2)
+        fig.tight_layout()
+        return _fig_to_base64(fig)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# IC distribution figure
+# ---------------------------------------------------------------------------
+
+def fig_ic_distribution(
+    ic_df,
+    method_label: str,
+) -> Optional[str]:
+    """2-panel IC history + distribution figure.
+
+    Parameters
+    ----------
+    ic_df:
+        ``pd.DataFrame`` with one IC column, or a ``pd.Series``.  The first
+        non-index column (or the series values) is used as the IC series.
+    method_label:
+        Human-readable label for the IC method, used in the figure title.
+
+    Returns
+    -------
+    base64 PNG string, or ``None`` when the input is empty / all-NaN.
+    """
+    try:
+        # --- Coerce to 1-D numeric series ---------------------------------
+        if ic_df is None:
+            return None
+        if isinstance(ic_df, pd.Series):
+            ic = ic_df.dropna()
+        elif isinstance(ic_df, pd.DataFrame):
+            if ic_df.empty or ic_df.shape[1] == 0:
+                return None
+            ic = ic_df.iloc[:, 0].dropna()
+        else:
+            return None
+
+        if len(ic) == 0:
+            return None
+
+        # --- Summary stats ------------------------------------------------
+        n = len(ic)
+        mean_ic = float(ic.mean())
+        std_ic = float(ic.std())
+        t_stat = mean_ic / std_ic * np.sqrt(n) if std_ic > 0 else float("nan")
+        hit_rate = float((ic > 0).mean())
+
+        # --- Rolling-4 mean -----------------------------------------------
+        rolling4 = ic.rolling(4, min_periods=1).mean()
+
+        # --- Figure layout: 1 row x 2 panels ------------------------------
+        fig, (ax_ts, ax_hist) = plt.subplots(
+            1, 2, figsize=(12, 4.4),
+            gridspec_kw={"width_ratios": [2.2, 1.0]},
+        )
+
+        # LEFT — time-series bar/line
+        x = np.arange(len(ic))
+        colors_bar = [
+            "#2563EB" if v >= 0 else "#DC2626" for v in ic.values
+        ]
+        ax_ts.bar(x, ic.values, color=colors_bar, alpha=0.55, width=0.8)
+        ax_ts.plot(x, rolling4.values, color="#F59E0B", lw=1.8,
+                   label="4-period mean", zorder=3)
+        ax_ts.axhline(0, color="black", lw=0.8, linestyle="--")
+        ax_ts.set_xlabel("Period index", fontsize=9)
+        ax_ts.set_ylabel("IC", fontsize=9)
+        ax_ts.legend(fontsize=8, loc="upper right")
+        ax_ts.grid(True, alpha=0.2, axis="y")
+        ax_ts.set_title("IC time series", fontsize=10)
+
+        # RIGHT — histogram
+        ic_arr = ic.values.astype(float)
+        # Freedman–Diaconis bin width, fall back to ~15 bins
+        try:
+            iqr = float(np.percentile(ic_arr, 75) - np.percentile(ic_arr, 25))
+            bw = 2.0 * iqr / (n ** (1.0 / 3.0)) if iqr > 0 else None
+            bins = (
+                max(5, int(np.ceil((ic_arr.max() - ic_arr.min()) / bw)))
+                if bw
+                else 15
+            )
+            bins = min(bins, 40)
+        except Exception:
+            bins = 15
+
+        mean_color = "#2563EB" if mean_ic >= 0 else "#DC2626"
+        ax_hist.hist(ic_arr, bins=bins, color=mean_color, alpha=0.65,
+                     edgecolor="white", linewidth=0.4)
+        ax_hist.axvline(0, color="#6b7280", lw=1.4, linestyle="--",
+                        label="zero")
+        ax_hist.axvline(mean_ic, color=mean_color, lw=2.0, linestyle="-",
+                        label=f"mean {mean_ic:+.4f}")
+        ax_hist.set_xlabel("IC", fontsize=9)
+        ax_hist.set_ylabel("Count", fontsize=9)
+        ax_hist.grid(True, alpha=0.2, axis="y")
+        ax_hist.legend(fontsize=8, loc="upper left")
+
+        # Annotation box
+        _t_str = f"{t_stat:+.2f}" if not np.isnan(t_stat) else "—"
+        ann = (
+            f"n = {n}\n"
+            f"mean = {mean_ic:+.4f}\n"
+            f"std = {std_ic:.4f}\n"
+            f"t = {_t_str}\n"
+            f"hit = {hit_rate:.1%}"
+        )
+        ax_hist.text(
+            0.97, 0.97, ann,
+            transform=ax_hist.transAxes,
+            fontsize=8, va="top", ha="right",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                      edgecolor="#d1d5db", alpha=0.92),
+        )
+        ax_hist.set_title("Distribution", fontsize=10)
+
+        fig.suptitle(f"{method_label} IC — history & distribution",
+                     fontsize=11, fontweight="bold")
         fig.tight_layout()
         return _fig_to_base64(fig)
     except Exception:

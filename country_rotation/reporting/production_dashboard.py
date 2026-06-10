@@ -34,6 +34,7 @@ from country_rotation.reporting.signal_viz import (
     PALETTE12,
     _ranking_frame,
     fig_allocation_history,
+    fig_ic_distribution,
     fig_signal_ranking,
     signal_history_payload,
 )
@@ -260,6 +261,67 @@ def _allocations_section_body(signal_latest: dict,
     return "\n".join(parts)
 
 
+_IC_METHOD_LABELS = {
+    "ic_absolute": "Absolute (score level)",
+    "ic_relative": "Relative (63d score change)",
+}
+
+_IC_STAT_HEADERS = ["Method", "Mean IC", "Std IC", "t-stat", "ICIR", "Hit Rate"]
+
+
+def _ic_compact_row(col: str, series: "pd.Series") -> list:
+    """One compact stats row for an IC series column."""
+    import math as _math
+    import numpy as np
+
+    vals = series.dropna()
+    n = len(vals)
+    if n == 0:
+        return [_IC_METHOD_LABELS.get(col, col), "—", "—", "—", "—", "—"]
+    mean_ic = float(vals.mean())
+    std_ic = float(vals.std())
+    t_stat = mean_ic / std_ic * (n ** 0.5) if std_ic > 0 else float("nan")
+    icir = mean_ic / std_ic if std_ic > 0 else float("nan")
+    hit_rate = float((vals > 0).mean())
+    label = _IC_METHOD_LABELS.get(col, col)
+
+    def _f(v, d=4):
+        return "—" if v is None or (isinstance(v, float) and _math.isnan(v)) else f"{float(v):.{d}f}"
+
+    return [label, _f(mean_ic), _f(std_ic), _f(t_stat, 2), _f(icir), _pct(hit_rate)]
+
+
+def _ic_analysis_section_body(ic_series: "Optional[pd.DataFrame]") -> str:
+    """IC distribution figures + compact stats table per method.
+
+    Returns an empty string when ``ic_series`` is None/empty (caller omits
+    the section).
+    """
+    if ic_series is None or ic_series.empty:
+        return ""
+
+    parts = []
+    stat_rows = []
+    for col in ("ic_absolute", "ic_relative"):
+        if col not in ic_series.columns:
+            continue
+        series = ic_series[col]
+        label = _IC_METHOD_LABELS.get(col, col)
+        b64 = fig_ic_distribution(series, label)
+        if b64:
+            parts.append(_img_tag(b64, f"IC Distribution — {label}"))
+        stat_rows.append(_ic_compact_row(col, series))
+
+    if not parts:
+        return ""
+
+    if stat_rows:
+        parts.append("<h4 class='tbl-title'>IC Summary</h4>")
+        parts.append(_table(_IC_STAT_HEADERS, stat_rows, css_class="def-table"))
+
+    return "\n".join(parts)
+
+
 #: metrics.json key -> (label, formatter) for the definition tables.
 _STAT_FORMATS = {
     "ann_return": ("Ann Return", lambda v: _pct(v, decimals=2)),
@@ -346,6 +408,7 @@ def build_strategy_pane(
     allocations_latest: dict,
     allocations: pd.DataFrame,
     history_monthly: pd.DataFrame,
+    ic_series: Optional[pd.DataFrame] = None,
 ) -> str:
     """HTML fragment for one deployed strategy (no shell wrapper).
 
@@ -359,7 +422,12 @@ def build_strategy_pane(
         ``allocations.csv`` frame (rebalance dates x countries).
     history_monthly:
         ``signal_history_monthly.csv`` frame (month-end dates x countries).
+    ic_series:
+        ``ic_series.csv`` frame (signal dates x ic_absolute/ic_relative).
+        ``None`` or empty -> IC Analysis section is omitted.
     """
+    ic_body = _ic_analysis_section_body(ic_series)
+
     parts = [
         f'<h2 class="strat-label">{entry.get("label", entry["id"])}</h2>',
         _bmk_badge(entry),
@@ -368,6 +436,10 @@ def build_strategy_pane(
                  open=True),
         _section("Signal Evolution",
                  _evolution_section_body(entry["id"], history_monthly)),
+    ]
+    if ic_body:
+        parts.append(_section("IC Analysis", ic_body))
+    parts += [
         _section("Allocations",
                  _allocations_section_body(signal_latest, allocations)),
         _section("Metrics Detail", _metrics_section_body(metrics)),
@@ -673,6 +745,8 @@ def build_dashboard(
     run_dir = Path(run_dir)
     registry = _read_json(Path(registry_path))
 
+    import warnings as _warnings
+
     panes = []
     data_end = "—"
     next_rebalance = "—"
@@ -685,12 +759,29 @@ def build_dashboard(
         allocations = _read_frame(sdir / "allocations.csv")
         history_monthly = _read_frame(sdir / "signal_history_monthly.csv")
 
+        ic_series: Optional[pd.DataFrame] = None
+        ic_path = sdir / "ic_series.csv"
+        if ic_path.exists():
+            try:
+                ic_series = _read_frame(ic_path)
+            except Exception as exc:
+                _warnings.warn(
+                    f"[production_dashboard] could not load {ic_path}: {exc}",
+                    stacklevel=2,
+                )
+        else:
+            _warnings.warn(
+                f"[production_dashboard] ic_series.csv absent for "
+                f"{entry['id']} — IC Analysis section omitted.",
+                stacklevel=2,
+            )
+
         panes.append((
             entry["id"],
             entry.get("label", entry["id"]),
             build_strategy_pane(entry, metrics, signal_latest,
                                 allocations_latest, allocations,
-                                history_monthly),
+                                history_monthly, ic_series=ic_series),
         ))
         data_end = metrics.get("data_end", data_end)
         next_rebalance = allocations_latest.get(
