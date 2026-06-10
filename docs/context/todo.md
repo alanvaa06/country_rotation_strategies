@@ -39,3 +39,10 @@
 - [done] Engine 'top_n_level' selection (canonical AMP-2013 rank-of-level, all weighting branches incl. Cap_Tilt) + pre-registered 6-spec signal tournament (scripts/spec_tournament.py: screen-window IC + BH-FDR + one-shot lockbox); winners World/DM = S5_amp_ey_change (q .019/.093), EM = S1 (not significant); 145 tests green
 - [done] Winner scorecard runs + verdict — research_run.py `--signal amp_ey` (S5 tournament winner, requires --track prior, tag `_S5`); 4 full runs World/DM x cap_tilt/eqw-active @63d vs cap index: ALL FAIL (0/3 checks) — S5 improves composite IC rel (World +0.0705 t 2.56; DM +0.0576 t 1.63) but realized IR is negative everywhere (World cap_tilt -0.26, DM cap_tilt -0.24); old vm blend remains the better traded book; no certification
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)
+
+## Dashboard UX overhaul (2026-06-09)
+- [done] 1. Evidence-grade verdict banner (tier function + per-gate chips, replaces FAIL-wall)
+- [done] 2. Collapsible section sub-headers (default all collapsed, button toggles)
+- [done] 3. Identifier buttons — index constituents module (S&P 500 / Nasdaq-100 / Russell 1000 from Wikipedia, display-only)
+- [done] 4. Viewport-fit shell (100vh, overflow hidden, fixed header + scrollable pane area, denser stat cards)
+- [done] 5. Rebuild real dashboard (9 panes, 7.87 MB, EM cap_tilt = power-limited) + 155 tests green + pushed dev
