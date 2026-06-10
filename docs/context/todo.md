@@ -40,7 +40,7 @@
 - [done] Winner scorecard runs + verdict — research_run.py `--signal amp_ey` (S5 tournament winner, requires --track prior, tag `_S5`); 4 full runs World/DM x cap_tilt/eqw-active @63d vs cap index: ALL FAIL (0/3 checks) — S5 improves composite IC rel (World +0.0705 t 2.56; DM +0.0576 t 1.63) but realized IR is negative everywhere (World cap_tilt -0.26, DM cap_tilt -0.24); old vm blend remains the better traded book; no certification
 - [done] ACWI sole-benchmark evaluation — research_run.py `--bmk-index World` (verified ACWI-equivalent: 0.887 DM + 0.111 EM, residual TE 0.14%/yr; overrides --bmk-source, tag `_vsWorld`) + 6 full runs World/DM/EM x cap_tilt/eqw-active vm @63 vs ACWI: best = DM cap_tilt (IR +0.30, MC p .040, param_stable PASS, TE 2.1%, beta 0.98); EM flips negative vs ACWI; no certification; 154 tests green
 - [pending] ACWI dashboard section + toggle persistence
-- [pending] ACWI winner forensics + verdict doc
+- [done] ACWI winner forensics + verdict doc — overfit_forensics.py parameterized (--segment/--bmk-index/--render-only; + stationary-bootstrap p(IR<=0) n=2000 + alpha decomposition); DM cap_tilt vs ACWI: not parameter-overfit (1/7 signatures), DSR fail = power artifact (needs IR .47/45y), BUT active mean is 100% the structural DM-vs-ACWI spread (selection leg IR -0.04); bootstrap p .054, family-wise MC p .26 — report outputs/research/overfit_forensics_DM_vsWorld.md
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)
 
 ## Dashboard UX overhaul (2026-06-09)
