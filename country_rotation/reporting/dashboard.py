@@ -404,24 +404,29 @@ def scorecard_from_verdict(verdict: dict) -> str:
 # Strategy pane
 # ---------------------------------------------------------------------------
 
-def _section(title: str, body_html: str) -> str:
+def _section(title: str, body_html: str, open: bool = False) -> str:
     """Collapsible section: <button> header (keyboard accessible) + hidden body.
 
-    All sections start COLLAPSED (display:none, aria-expanded=false); the
+    Sections start COLLAPSED by default (display:none, aria-expanded=false);
+    pass ``open=True`` for a section that should start expanded (the shell's
+    ``openSecs`` map must then be pre-seeded with its normalized title). The
     shell's ``toggleSec`` JS flips visibility and the ▸/▾ arrow. Banner and
     stat cards stay outside sections so they are always visible.
 
     The title lives in its own ``<span class="sec-title">`` so the shell JS
     can key open/closed state by title and persist it across pane switches.
     """
+    expanded = "true" if open else "false"
+    arrow = "▾" if open else "▸"
+    display = "block" if open else "none"
     return (
         '<section class="sec">'
-        '<button class="sec-toggle" type="button" aria-expanded="false" '
+        f'<button class="sec-toggle" type="button" aria-expanded="{expanded}" '
         'onclick="toggleSec(this)">'
-        '<span class="sec-arrow">▸</span> '
+        f'<span class="sec-arrow">{arrow}</span> '
         '<span class="sec-title">' + title + "</span></button>"
-        '<div class="sec-body" style="display:none">' + body_html + "</div>"
-        "</section>"
+        f'<div class="sec-body" style="display:{display}">' + body_html
+        + "</div></section>"
     )
 
 
