@@ -32,5 +32,8 @@
 - [done] Pre-registered robustness: DM prior-vm @21d monthly — monthly DEGRADES vs quarterly; ruled out (docs/research/segment_verdicts_2026-06-09.md Addendum §1)
 - [done] Quarterly re-run protocol set up + determinism verified bit-for-bit — runbook docs/research/RUNBOOK_quarterly_recert.md; run each quarter after Inputs/ refresh
 - [done] Cap-weighted mandate benchmark (--bmk-source index) + blended configs (--mode blend 0.3/0.5) — tested + self-verified; selection skill MC-significant, IC significant (World rel @63 t 2.29), IR vs cap negative (construction tilt)
-- [pending] PRE-REGISTERED NEXT: benchmark-aware construction — cap-index base weights ± composite-score tilts under a TE budget; re-run DM/World vs cap index; expect realized IR to reflect the MC-significant selection skill
+- [done] PRE-REGISTERED NEXT: benchmark-aware construction — cap-index base weights ± composite-score tilts under a TE budget; re-run DM/World vs cap index; expect realized IR to reflect the MC-significant selection skill
+  - [done] Cap_Tilt engine branch (Engine(base_weights=...), active_share budget, long-only clip, sum-1 conservation) + base_weights threaded through parameter_sweep/walk_forward/monte_carlo_null/compute_validation/build_report; 7 new tests, suite 132 green incl. parity
+  - [done] Per-segment Cap_Tilt runs (DM/World/EM vs cap index) via research_run.py --construction cap_tilt; verdict JSONs in outputs/research/
+- [done] Multi-strategy toggle dashboard — reporting/dashboard.py (build_strategy_pane + render_dashboard, segment tabs World/DM/EM + strategy toggle, default Cap_Tilt) + scripts/build_dashboard.py (9 panes, one self-contained HTML); 6 TDD tests
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)

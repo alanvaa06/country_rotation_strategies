@@ -46,6 +46,13 @@ Usage
 -----
     python scripts/research_run.py --segment World [--track screen|prior]
         [--quick] [--periodicity 63] [--fdr-q 0.10]
+        [--construction eqw|cap_tilt]
+
+``--construction cap_tilt`` switches the portfolio construction from the
+default equal-weight top-N sleeve to the benchmark-aware Cap_Tilt book
+(cap-weight base from the ``Market_Cap`` input, +/- ``active_share`` score
+tilts).  It is the investable-mandate construction, so it requires
+``--bmk-source index`` and ``--mode active``.
 
 Note: requires local data (``Inputs/``, ``Classification.xlsx``) which is
 gitignored — present on the research machine only.
@@ -421,6 +428,7 @@ def build_verdict_payload(
     extra_notes=(),
     mandate_stats=None,
     composite_ic=None,
+    active_share=None,
 ) -> dict:
     """Assemble the verdict JSON payload (both tracks).
 
@@ -491,14 +499,15 @@ def build_verdict_payload(
             ),
         }
 
-    return _json_safe(
-        {
+    construction = getattr(args, "construction", "eqw")
+    payload = {
             "segment": args.segment,
             "track": args.track,
             "basis": args.basis,
             "bmk_source": getattr(args, "bmk_source", "eqw"),
             "mode": getattr(args, "mode", "active"),
             "bmk_weight": getattr(args, "bmk_weight", 0.0),
+            "construction": construction,
             "quick": bool(args.quick),
             "periodicity": args.periodicity,
             "n_countries": len(universe),
@@ -512,8 +521,10 @@ def build_verdict_payload(
             "mandate_stats": mandate_stats,
             "composite_ic": composite_ic,
             "runtime_seconds": round(runtime_s, 1),
-        }
-    )
+    }
+    if construction == "cap_tilt":
+        payload["active_share"] = active_share
+    return _json_safe(payload)
 
 
 def print_verdict_summary(payload: dict) -> None:
@@ -622,7 +633,24 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         help="Benchmark weight for --mode blend (e.g. 0.3 or 0.5). "
              "Ignored in active mode (forced 0.0 by the engine).",
     )
+    parser.add_argument(
+        "--construction", choices=("eqw", "cap_tilt"), default="eqw",
+        help="Portfolio construction: 'eqw' (default) = equal-weight top-N "
+             "selection sleeve; 'cap_tilt' = cap-weight base from the "
+             "Market_Cap input +/- active-share score tilts (benchmark-aware "
+             "mandate book; requires --bmk-source index and --mode active).",
+    )
     args = parser.parse_args()
+
+    if args.construction == "cap_tilt" and (
+        args.bmk_source != "index" or args.mode != "active"
+    ):
+        raise SystemExit(
+            "[research_run] ERROR: --construction cap_tilt is the "
+            "benchmark-aware mandate construction — it requires "
+            "--bmk-source index and --mode active "
+            f"(got bmk_source='{args.bmk_source}', mode='{args.mode}')."
+        )
 
     t0 = time.time()
 
@@ -672,6 +700,32 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         prices_with_bmk[args.segment] = equal_weight_index(prices)
         _log(f"Benchmark: synthetic equal-weight '{args.segment}' universe.")
 
+    # Cap_Tilt base weights: cap-weight share of each universe country,
+    # from the Market_Cap input (ffilled; rows with positive total only).
+    base_weights = None
+    if args.construction == "cap_tilt":
+        if "Market_Cap" not in processed:
+            raise SystemExit(
+                "[research_run] ERROR: --construction cap_tilt requires the "
+                "'Market_Cap' metric in the inputs (Inputs/Market_Cap.xlsx) "
+                "to build the cap-weight base."
+            )
+        mcap_df = processed["Market_Cap"]
+        mcap_cols = [c for c in universe if c in mcap_df.columns]
+        if len(mcap_cols) < _MIN_COUNTRIES:
+            raise SystemExit(
+                f"[research_run] ERROR: Market_Cap covers only "
+                f"{len(mcap_cols)} universe countries (< {_MIN_COUNTRIES})."
+            )
+        mcap = mcap_df[mcap_cols].ffill()
+        mcap = mcap[mcap.sum(axis=1) > 0]
+        base_weights = mcap.div(mcap.sum(axis=1), axis=0)
+        _log(
+            f"Cap_Tilt base weights: {base_weights.shape[1]} countries x "
+            f"{len(base_weights)} dates (active_share="
+            f"{cfg.backtest.active_share:.2f})."
+        )
+
     cfg_bt = dataclasses.replace(
         cfg.backtest,
         bmk=args.segment,
@@ -679,6 +733,9 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         mode=args.mode,
         periodicity=args.periodicity,
         selection_criteria="relative",
+        weighting_method=(
+            "Cap_Tilt" if args.construction == "cap_tilt" else "Equal"
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -701,6 +758,8 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
     if args.track == "prior" and args.prior_set != "full":
         tag += f"_{args.prior_set}"
     tag += f"_p{args.periodicity}_{args.basis}"
+    if args.construction == "cap_tilt":
+        tag += "_captilt"
     if args.bmk_source == "index":
         tag += "_capbmk"
     if args.mode == "blend":
@@ -733,6 +792,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
             payload = build_verdict_payload(
                 args, universe, time.time() - t0, factor_set,
                 screen_result=screen_result,
+                active_share=cfg_bt.active_share,
             )
             with open(verdict_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
@@ -804,6 +864,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         n_folds=n_folds,
         seed=42,
         basis=args.basis,
+        base_weights=base_weights,
     )
 
     # ------------------------------------------------------------------
@@ -818,6 +879,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         report_path,
         validation_report=validation_report,
         contributions=contributions,
+        base_weights=base_weights,
     )
     _log(f"Report -> {report_info['path']} ({report_info['n_figures']} figures)")
 
@@ -857,6 +919,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         extra_notes=extra_notes,
         mandate_stats=mandate_stats,
         composite_ic=composite_ic,
+        active_share=cfg_bt.active_share,
     )
     with open(verdict_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
