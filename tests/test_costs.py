@@ -326,3 +326,90 @@ def test_breakeven_positive_finite_and_consistent(hand_engine_result):
     cost = res.period_results["turnover"] * bps / 1e4
     net = active - cost.reindex(active.index).fillna(0.0)
     assert abs(tca.daily_ir(net)) < 0.05
+
+
+# ---------------------------------------------------------------------------
+# Part 4 — cost_bps threading: scorecard / protocols / report
+# ---------------------------------------------------------------------------
+
+def _cost_vector(columns) -> pd.Series:
+    """Deterministic non-flat per-country cost vector for threading tests."""
+    rng = np.random.default_rng(11)
+    return pd.Series(rng.uniform(5.0, 30.0, len(columns)), index=list(columns))
+
+
+def test_compute_validation_threads_cost_bps(synthetic_prices, synthetic_scores):
+    """compute_validation with a cost vector returns a valid report and the
+    absolute-basis stats differ from the flat-cost run (costs flow through
+    net period returns)."""
+    from country_rotation.validation import scorecard as sc
+
+    prices = synthetic_prices.iloc[:400]
+    scores = synthetic_scores.loc[prices.index]
+    cfg = _cfg(mode="active", bmk_weight=0.0, transaction_cost_bps=2.0)
+    grid = {"relative_selection_score": (3, 5)}
+    vec = _cost_vector(scores.columns)
+
+    report = sc.compute_validation(
+        scores, prices, cfg, grid,
+        n_boot=50, n_mc=5, n_folds=3, seed=0,
+        basis="absolute", cost_bps=vec,
+    )
+    expected_keys = {"no_overfitting", "param_stable", "statistically_significant"}
+    assert set(report.verdict.checks.keys()) == expected_keys
+    for key, val in report.verdict.checks.items():
+        assert isinstance(val, bool), f"checks[{key!r}] is {type(val)}, not bool"
+    assert report.verdict.overall == all(report.verdict.checks.values())
+
+    flat = sc.compute_validation(
+        scores, prices, cfg, grid,
+        n_boot=50, n_mc=5, n_folds=3, seed=0,
+        basis="absolute",
+    )
+    # Costed absolute-basis Sharpe must differ from the flat 2bps run.
+    assert report.sharpe.sharpe_ann != pytest.approx(flat.sharpe.sharpe_ann)
+
+
+def test_sweep_and_mc_deterministic_with_cost_bps(synthetic_prices, synthetic_scores):
+    """parameter_sweep / monte_carlo_null with cost_bps are deterministic
+    across calls (same seed -> identical tables / p-values)."""
+    from country_rotation.validation import protocols as proto
+
+    prices = synthetic_prices.iloc[:400]
+    scores = synthetic_scores.loc[prices.index]
+    cfg = _cfg(mode="active", bmk_weight=0.0)
+    grid = {"relative_selection_score": (3, 5)}
+    vec = _cost_vector(scores.columns)
+
+    s1 = proto.parameter_sweep(scores, prices, cfg, grid, cost_bps=vec)
+    s2 = proto.parameter_sweep(scores, prices, cfg, grid, cost_bps=vec)
+    pd.testing.assert_frame_equal(s1.table, s2.table)
+    assert len(s1.table) >= 2
+    assert np.isfinite(s1.table["sharpe_ann"].to_numpy(dtype=float)).all()
+
+    m1 = proto.monte_carlo_null(scores, prices, cfg, n_sims=5, seed=0, cost_bps=vec)
+    m2 = proto.monte_carlo_null(scores, prices, cfg, n_sims=5, seed=0, cost_bps=vec)
+    assert m1.p_value == m2.p_value
+    assert np.array_equal(m1.null_sharpes, m2.null_sharpes)
+    assert 0.0 < m1.p_value <= 1.0
+
+    wf = proto.walk_forward(scores, prices, cfg, grid, n_folds=3, cost_bps=vec)
+    assert len(wf.fold_table) >= 1
+
+
+def test_build_report_threads_cost_bps(synthetic_prices, synthetic_scores, tmp_path):
+    """build_report accepts cost_bps and writes a complete HTML report."""
+    from country_rotation.reporting.report import build_report
+
+    prices = synthetic_prices.iloc[:400]
+    scores = synthetic_scores.loc[prices.index]
+    cfg = _cfg(mode="active", bmk_weight=0.0)
+    out = tmp_path / "report_tca.html"
+
+    info = build_report(
+        scores, prices, cfg, str(out), cost_bps=_cost_vector(scores.columns)
+    )
+    assert out.exists()
+    assert info["n_figures"] >= 3
+    html = out.read_text(encoding="utf-8")
+    assert "Performance" in html

@@ -720,6 +720,7 @@ def build_report(
     contributions: Optional[dict] = None,
     ic_methods: tuple = ("absolute", "relative"),
     base_weights: Optional[pd.DataFrame] = None,
+    cost_bps: Optional[pd.Series] = None,
 ) -> dict:
     """Build a comprehensive HTML backtest report and write it to *output_path*.
 
@@ -744,6 +745,10 @@ def build_report(
     base_weights:
         Optional cap-weight base (dates x countries) threaded to the Engine —
         required when ``cfg.weighting_method == 'Cap_Tilt'``.
+    cost_bps:
+        Optional per-country one-way trading cost in bps (index = country
+        names) threaded to the Engine.  ``None`` -> legacy flat
+        ``cfg.transaction_cost_bps``.
 
     Returns
     -------
@@ -756,7 +761,9 @@ def build_report(
     # ------------------------------------------------------------------
     # 1. Run engine
     # ------------------------------------------------------------------
-    engine_result = Engine(scores, prices, cfg, base_weights=base_weights).run()
+    engine_result = Engine(
+        scores, prices, cfg, base_weights=base_weights, cost_bps=cost_bps
+    ).run()
 
     # ------------------------------------------------------------------
     # 2. Equal-weight null (country columns only)

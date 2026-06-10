@@ -189,6 +189,7 @@ def compute_validation(
     seed: int = 0,
     basis: str = "absolute",
     base_weights: pd.DataFrame | None = None,
+    cost_bps: pd.Series | None = None,
 ) -> ValidationReport:
     """Run the full validation suite and assemble a :class:`ValidationReport`.
 
@@ -232,6 +233,13 @@ def compute_validation(
         run, the parameter sweep, the walk-forward (sliced with the same
         masks as prices) and the Monte-Carlo null — required when
         ``cfg.weighting_method == 'Cap_Tilt'``.
+    cost_bps :
+        Optional per-country one-way trading cost in bps (index = country
+        names) threaded to the SAME four consumers as ``base_weights`` —
+        the headline Engine run, the parameter sweep, the walk-forward
+        (IS and OOS runs) and every Monte-Carlo null book, so all paths
+        price trades like-for-like.  ``None`` -> legacy flat
+        ``cfg.transaction_cost_bps``.
 
     Returns
     -------
@@ -240,7 +248,9 @@ def compute_validation(
     # ------------------------------------------------------------------
     # 1. Run strategy engine; build the headline equity for the basis
     # ------------------------------------------------------------------
-    result = Engine(scores, prices, cfg, base_weights=base_weights).run()
+    result = Engine(
+        scores, prices, cfg, base_weights=base_weights, cost_bps=cost_bps
+    ).run()
     net_returns = result.period_results["portfolio_return_net"].dropna()
 
     # Daily strategy returns (None if engine produced no daily curve)
@@ -287,7 +297,8 @@ def compute_validation(
     # 3. Parameter sweep + stability + DSR (trial sharpes from sweep table)
     # ------------------------------------------------------------------
     sweep = parameter_sweep(
-        scores, prices, cfg, grid, basis=basis, base_weights=base_weights
+        scores, prices, cfg, grid, basis=basis, base_weights=base_weights,
+        cost_bps=cost_bps,
     )
     stability = stability_summary(sweep, cfg)
 
@@ -300,11 +311,12 @@ def compute_validation(
     # 4. Walk-forward, Monte-Carlo null, PSR, Sharpe significance, bootstrap
     # ------------------------------------------------------------------
     wf = walk_forward(
-        scores, prices, cfg, grid, n_folds=n_folds, base_weights=base_weights
+        scores, prices, cfg, grid, n_folds=n_folds, base_weights=base_weights,
+        cost_bps=cost_bps,
     )
     mc = monte_carlo_null(
         scores, prices, cfg, n_sims=n_mc, seed=seed, basis=basis,
-        base_weights=base_weights,
+        base_weights=base_weights, cost_bps=cost_bps,
     )
     psr = probabilistic_sharpe_ratio(equity, benchmark_sharpe=0.0)
     sharpe = sharpe_significance(equity)

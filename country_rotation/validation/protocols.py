@@ -93,9 +93,12 @@ def _net_period_returns(
     prices: pd.DataFrame,
     cfg: BacktestConfig,
     base_weights: pd.DataFrame | None = None,
+    cost_bps: pd.Series | None = None,
 ) -> pd.Series:
     """Run the Engine and return net period returns (indexed by d_ret)."""
-    result = Engine(scores, prices, cfg, base_weights=base_weights).run()
+    result = Engine(
+        scores, prices, cfg, base_weights=base_weights, cost_bps=cost_bps
+    ).run()
     return result.period_results[_NET_COL].dropna()
 
 
@@ -120,6 +123,7 @@ def _basis_equity(
     cfg: BacktestConfig,
     basis: str,
     base_weights: pd.DataFrame | None = None,
+    cost_bps: pd.Series | None = None,
 ) -> pd.Series:
     """Run the Engine once and return the equity curve for the chosen basis.
 
@@ -128,7 +132,9 @@ def _basis_equity(
     daily series (strategy minus benchmark), so every downstream statistic
     becomes an information-ratio-style (alpha) statistic.
     """
-    result = Engine(scores, prices, cfg, base_weights=base_weights).run()
+    result = Engine(
+        scores, prices, cfg, base_weights=base_weights, cost_bps=cost_bps
+    ).run()
     if basis == "active":
         return equity_curve(_active_daily(result))
     return equity_curve(result.period_results[_NET_COL].dropna())
@@ -163,6 +169,7 @@ def parameter_sweep(
     grid: dict[str, tuple],
     basis: str = "absolute",
     base_weights: pd.DataFrame | None = None,
+    cost_bps: pd.Series | None = None,
 ) -> SweepResult:
     """Run 1-D parameter neighborhoods around ``base``.
 
@@ -188,6 +195,10 @@ def parameter_sweep(
     base_weights :
         Optional cap-weight base (dates x countries) forwarded to every
         Engine run — required when ``base.weighting_method == 'Cap_Tilt'``.
+    cost_bps :
+        Optional per-country one-way trading cost in bps (index = country
+        names) forwarded to every Engine run.  ``None`` -> legacy flat
+        ``cfg.transaction_cost_bps``.
 
     Returns
     -------
@@ -206,7 +217,9 @@ def parameter_sweep(
             continue
         seen.add(key)
         try:
-            result = Engine(scores, prices, cfg, base_weights=base_weights).run()
+            result = Engine(
+                scores, prices, cfg, base_weights=base_weights, cost_bps=cost_bps
+            ).run()
         except Exception as exc:  # degenerate config: skip, keep sweeping
             warnings.warn(f"parameter_sweep: skipping config {key}: {exc}")
             continue
@@ -351,6 +364,7 @@ def walk_forward(
     grid: dict[str, tuple],
     n_folds: int = 5,
     base_weights: pd.DataFrame | None = None,
+    cost_bps: pd.Series | None = None,
 ) -> WalkForwardResult:
     """Anchored walk-forward configuration selection.
 
@@ -376,7 +390,10 @@ def walk_forward(
     fold k's config choice; nothing after segment k's end influences
     fold k at all.  ``base_weights`` (Cap_Tilt) is truncated with the SAME
     ``.loc`` masks as prices for both IS and OOS runs, so cap-weight rows
-    never leak future data into a fold.
+    never leak future data into a fold.  ``cost_bps`` (per-country one-way
+    bps) is forwarded unchanged to every IS and OOS Engine run, so
+    in-sample selection and out-of-sample evaluation price trades
+    like-for-like.
     """
     if n_folds < 1:
         raise ValueError("n_folds must be >= 1")
@@ -411,7 +428,8 @@ def walk_forward(
         for cand in candidates:
             try:
                 net = _net_period_returns(
-                    is_scores, is_prices, cand, base_weights=is_base_weights
+                    is_scores, is_prices, cand,
+                    base_weights=is_base_weights, cost_bps=cost_bps,
                 )
             except Exception as exc:
                 warnings.warn(f"walk_forward: fold {k} IS run failed for "
@@ -439,6 +457,7 @@ def walk_forward(
                     if base_weights is not None
                     else None
                 ),
+                cost_bps=cost_bps,
             )
         except Exception as exc:
             warnings.warn(f"walk_forward: fold {k} OOS run failed: {exc}")
@@ -534,6 +553,7 @@ def monte_carlo_null(
     seed: int = 0,
     basis: str = "absolute",
     base_weights: pd.DataFrame | None = None,
+    cost_bps: pd.Series | None = None,
 ) -> MonteCarloNull:
     """Random-signal null distribution through the same Engine config.
 
@@ -556,13 +576,20 @@ def monte_carlo_null(
         Optional cap-weight base (dates x countries) forwarded to the actual
         AND every null Engine run — required for ``Cap_Tilt`` configs, so the
         null holds construction constant and randomizes only the signal.
+    cost_bps :
+        Optional per-country one-way trading cost in bps forwarded to the
+        actual AND every null Engine run — random books are charged the
+        same per-country rates (like-for-like costs).
 
     Returns
     -------
     MonteCarloNull
     """
     actual = sharpe_significance(
-        _basis_equity(scores, prices, cfg, basis, base_weights=base_weights)
+        _basis_equity(
+            scores, prices, cfg, basis,
+            base_weights=base_weights, cost_bps=cost_bps,
+        )
     ).sharpe_ann
 
     null_sharpes = np.empty(n_sims, dtype=float)
@@ -572,7 +599,10 @@ def monte_carlo_null(
             rng.random(scores.shape), index=scores.index, columns=scores.columns
         )
         sharpe = sharpe_significance(
-            _basis_equity(random_scores, prices, cfg, basis, base_weights=base_weights)
+            _basis_equity(
+                random_scores, prices, cfg, basis,
+                base_weights=base_weights, cost_bps=cost_bps,
+            )
         ).sharpe_ann
         null_sharpes[s] = 0.0 if math.isnan(sharpe) else sharpe
 
