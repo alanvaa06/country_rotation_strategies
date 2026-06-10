@@ -26,12 +26,35 @@
 5. **Honest negatives:** EM (all tracks) and pure screened tracks (DM/World) are negatives. Factor-level country signals are individually too weak (IC ≈ 0.01–0.06) to survive FDR across a 45-factor family — consistent with the literature's IC ≈ 0.05 norm and "breadth, not strength" maxim.
 
 ## Recommended path forward
-1. **Extend history** (vendor data pre-2010 or MSCI index-level proxies back to 1990s) — the single highest-value action; doubles power.
-2. Run DM vm with monthly periodicity (more rebalances, same horizon) as a pre-registered robustness check.
-3. Paper-trade the DM 50/50 V+M composite (top-5, quarterly, 2bps) while evidence accrues; re-run `python scripts/research_run.py --segment DM --track prior --prior-set vm` quarterly — the platform re-certifies automatically.
+1. **Extend history** — only 2010+ data exists (vendor has no earlier periods). This remains the single highest-value lever but is currently blocked by data availability. Revisit if MSCI/index-level proxies back to the 1990s become accessible.
+2. ~~Run DM vm monthly robustness check~~ — **DONE 2026-06-09, see Addendum below. Monthly degrades the strategy; quarterly confirmed as the correct cadence.**
+3. Paper-trade the DM 50/50 V+M composite (top-5, **quarterly**, 2bps) while evidence accrues; re-run `python scripts/research_run.py --segment DM --track prior --prior-set vm` each quarter as `Inputs/` is refreshed — the platform re-certifies deterministically (proven bit-for-bit reproducible, see Addendum §2).
 4. Keep EM out of scope until DM/World certify.
+
+---
+
+## Addendum 2026-06-09 — Monthly robustness + reproducibility
+
+### 1. DM 50/50 V+M: monthly (@21d) vs quarterly (@63d), pre-registered
+
+| Axis | Monthly @21d | Quarterly @63d | Gate | Stronger |
+|---|---|---|---|---|
+| Sharpe t-stat | 1.53 | **1.96** | ≥2.0 | quarterly |
+| PSR | 0.93 | **0.97** | ≥0.95 | quarterly |
+| DSR | 0.67 | **0.91** | ≥0.95 | quarterly |
+| MC p-value | 0.257 | **0.059** | ≤0.05 | quarterly |
+| NW t vs equal-weight | 0.70 | **1.56** | >0 | quarterly |
+| Bootstrap Sharpe CI | [0.014, 0.204] | **[0.104, 0.426]** | low>0 | quarterly |
+
+**Finding — monthly rebalancing destroys the edge, it does not strengthen it.** The intuition "more rebalances → more observations → higher t" is *disproven*: monthly tripled the period count (~186 vs ~62) yet every discriminating statistic fell. At MC p = 0.257 the monthly strategy is statistically **indistinguishable from random country selection**; the NW t-stat versus the equal-weight null collapses from 1.56 to 0.70. Country value+momentum are slow signals (12-1 momentum, fundamental value); monthly cadence churns positions on noise — paying turnover and 2bps TC drag without capturing fresher signal. Quarterly (@63d) is the correct, literature-consistent cadence. **Monthly is ruled out as a certification path.**
+
+(`wf_efficiency` is identical (4.04) across both because the validation grid sweeps periodicity ∈ {21,63} regardless of base cadence, so the walk-forward stage is not a periodicity-discriminating statistic in this design — only the base-cadence Engine stats above discriminate.)
+
+### 2. Reproducibility / quarterly-re-cert mechanism — verified
+
+Re-ran the exact quarterly command on the unchanged dataset. The verdict reproduced the prior run **bit-for-bit**: max abs diff = 0.0 across sharpe_ann, t-stat, PSR, DSR, MC p, WFE, NW t, stability z-score and both bootstrap CI bounds (seed = 42 fixed throughout). This confirms the "re-certifies automatically as data accrues" mechanism: identical inputs → identical verdict, so any future change in a quarterly verdict is attributable solely to new data, not run-to-run noise.
 
 ## Reproducibility
 - `python scripts/research_run.py --segment {World|DM|EM} --track {screen|prior} [--prior-set vm] --periodicity {21|63}`
-- Artifacts per run (gitignored, local): `outputs/research/verdict_*.json`, `report_*.html`, `screening_*.xlsx`.
-- Code state: branch `dev` @ this commit; 120 tests green.
+- Output artifacts now carry the periodicity suffix to prevent cadence collisions: `verdict_{seg}_{track}[_{prior_set}]_p{periodicity}.json` (+ `report_*.html`, `screening_*.xlsx`). All gitignored, local.
+- Code state: branch `dev`; full pytest suite green.

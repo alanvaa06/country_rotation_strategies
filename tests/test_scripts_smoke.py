@@ -187,21 +187,23 @@ def test_research_run_smoke(tmp_path):
 
     assert out.returncode == 0, f"stdout:\n{out.stdout}\nstderr:\n{out.stderr}"
 
-    # Screening evidence + verdict are always written
-    assert (out_dir / "screening_World.xlsx").exists()
+    # Screening evidence + verdict are always written (track+periodicity-suffixed)
+    assert (out_dir / "screening_World_screen_p21.xlsx").exists()
     verdict = json.loads(
-        (out_dir / "verdict_World.json").read_text(encoding="utf-8")
+        (out_dir / "verdict_World_screen_p21.json").read_text(encoding="utf-8")
     )
     assert verdict["segment"] == "World"
+    assert verdict["track"] == "screen"
     assert verdict["n_countries"] == 10  # Region pseudo-rows excluded
     assert isinstance(verdict["verdict"]["overall"], bool)
 
     # The engineered value signal must survive -> full pipeline ran
     kept = verdict["screening"]["kept"]
     assert "PE" in kept, f"engineered PE signal not kept; kept={kept}"
+    assert verdict["factor_set"] == kept
     assert verdict["stats"] is not None
     assert verdict["stats"]["sharpe_ann"] is not None
-    assert (out_dir / "report_World.html").exists()
+    assert (out_dir / "report_World_screen_p21.html").exists()
 
 
 def test_build_scores_smoke(tmp_path):

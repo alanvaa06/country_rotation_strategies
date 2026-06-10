@@ -28,7 +28,7 @@
 - [done] Verdict: NO certification at pre-registered gates; DM 50/50 V+M nearest (t 1.96, MC p 0.059, DSR 0.91); EM clear negative; honest-negative documented
 
 ## Next (future sessions)
-- [pending] Extend price/fundamental history pre-2010 (highest-value: doubles statistical power)
-- [pending] Pre-registered robustness: DM prior-vm @21d monthly
-- [pending] Quarterly re-run protocol: `research_run.py --segment DM --track prior --prior-set vm` as data accrues
+- [blocked] Extend price/fundamental history pre-2010 — NO vendor access to earlier periods (confirmed 2026-06-09). Revisit only if MSCI/index proxies become available.
+- [done] Pre-registered robustness: DM prior-vm @21d monthly — monthly DEGRADES vs quarterly; ruled out (docs/research/segment_verdicts_2026-06-09.md Addendum §1)
+- [done] Quarterly re-run protocol set up + determinism verified bit-for-bit — runbook docs/research/RUNBOOK_quarterly_recert.md; run each quarter after Inputs/ refresh
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)

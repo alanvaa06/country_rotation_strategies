@@ -653,6 +653,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
     tag = f"{args.segment}_{args.track}"
     if args.track == "prior" and args.prior_set != "full":
         tag += f"_{args.prior_set}"
+    tag += f"_p{args.periodicity}"
     verdict_path = os.path.join(args.output_dir, f"verdict_{tag}.json")
     screen_result = None
     prior_evidence = None
