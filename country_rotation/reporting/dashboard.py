@@ -42,6 +42,7 @@ from country_rotation.reporting.report import (
 )
 
 __all__ = [
+    "acwi_section_body",
     "build_strategy_pane",
     "evidence_grade",
     "render_dashboard",
@@ -200,6 +201,17 @@ def evidence_grade(verdict: dict) -> dict:
     }
 
 
+def _gate_chips(gates: list) -> str:
+    """Per-gate chip row (value + threshold + PASS/fail) for a gate list."""
+    return "".join(
+        f'<span class="gate-chip gate-{g["state"]}" '
+        f'title="{g["label"]}: {g["value"]} (threshold {g["threshold"]})">'
+        f'{g["label"]} {g["value"]} <small>{g["threshold"]}</small> '
+        f'{"PASS" if g["passed"] else "fail"}</span>'
+        for g in gates
+    )
+
+
 def verdict_banner(verdict: dict) -> str:
     """Evidence-grade banner: tier line + per-gate chips + plain-language note.
 
@@ -208,13 +220,7 @@ def verdict_banner(verdict: dict) -> str:
     pass, DSR short on sample size) is not misread as overfitting.
     """
     grade = evidence_grade(verdict)
-    chips = "".join(
-        f'<span class="gate-chip gate-{g["state"]}" '
-        f'title="{g["label"]}: {g["value"]} (threshold {g["threshold"]})">'
-        f'{g["label"]} {g["value"]} <small>{g["threshold"]}</small> '
-        f'{"PASS" if g["passed"] else "fail"}</span>'
-        for g in grade["gates"]
-    )
+    chips = _gate_chips(grade["gates"])
     chips_html = f'<div class="gate-chips">{chips}</div>' if chips else ""
     return (
         f'<div class="banner grade-{grade["tier"]}">'
@@ -257,6 +263,52 @@ def stat_cards(verdict: dict) -> str:
         _card("IC rel (t)", _fmt(ic_rel.get("t_stat"))),
     ]
     return '<div class="cards">' + "".join(cards) + "</div>"
+
+
+def acwi_section_body(acwi_verdict: dict) -> str:
+    """Body HTML for the \"vs ACWI (sole benchmark)\" collapsible section.
+
+    Re-certifies the SAME strategy against the vendor World index
+    (ACWI-equivalent global cap-weighted benchmark) instead of the segment
+    benchmark: compact evidence-grade line + per-gate chips (reusing
+    :func:`evidence_grade`), a stat-card row from the ACWI verdict's
+    ``stats`` / ``mandate_stats``, and a benchmark-provenance note.
+    No figures — keeps the dashboard build fast.
+    """
+    grade = evidence_grade(acwi_verdict)
+    stats = acwi_verdict.get("stats") or {}
+    mandate = acwi_verdict.get("mandate_stats") or {}
+
+    chips = _gate_chips(grade["gates"])
+    chips_html = f'<div class="gate-chips">{chips}</div>' if chips else ""
+    grade_html = (
+        f'<div class="banner acwi-grade grade-{grade["tier"]}">'
+        f'<div class="grade-line"><strong>{grade["label"]}</strong> '
+        '<small style="font-weight:400;">vs ACWI</small></div>'
+        f"{chips_html}"
+        "</div>"
+    )
+
+    ci = stats.get("bootstrap_ci") or [None, None]
+    ci_txt = f"[{_fmt(ci[0])}, {_fmt(ci[1])}]"
+    cards = [
+        _card("IR (active, ann.)", _fmt(stats.get("sharpe_ann"))),
+        _card("Active t-stat", _fmt(stats.get("sharpe_t_stat"))),
+        _card("MC p-value", _fmt(stats.get("mc_p_value"), decimals=3)),
+        _card("DSR", _fmt(stats.get("dsr"), decimals=3)),
+        _card("Bootstrap CI", ci_txt),
+        _card("Tracking Error", _fmt(mandate.get("tracking_error"), pct=True)),
+        _card("Beta", _fmt(mandate.get("beta"))),
+    ]
+    cards_html = '<div class="cards">' + "".join(cards) + "</div>"
+
+    note = (
+        '<p class="grade-note acwi-note">Benchmark for this section is the '
+        "vendor World index — ACWI-equivalent (88/12 DM/EM composition "
+        "verified) — used as the sole benchmark for selection, mandate "
+        "comparison and certification.</p>"
+    )
+    return grade_html + cards_html + note
 
 
 def _pass_cell(passed: Optional[bool]) -> str:
@@ -358,12 +410,16 @@ def _section(title: str, body_html: str) -> str:
     All sections start COLLAPSED (display:none, aria-expanded=false); the
     shell's ``toggleSec`` JS flips visibility and the ▸/▾ arrow. Banner and
     stat cards stay outside sections so they are always visible.
+
+    The title lives in its own ``<span class="sec-title">`` so the shell JS
+    can key open/closed state by title and persist it across pane switches.
     """
     return (
         '<section class="sec">'
         '<button class="sec-toggle" type="button" aria-expanded="false" '
         'onclick="toggleSec(this)">'
-        '<span class="sec-arrow">▸</span> ' + title + "</button>"
+        '<span class="sec-arrow">▸</span> '
+        '<span class="sec-title">' + title + "</span></button>"
         '<div class="sec-body" style="display:none">' + body_html + "</div>"
         "</section>"
     )
@@ -376,6 +432,7 @@ def build_strategy_pane(
     base_weights: Optional[pd.DataFrame],
     verdict: dict,
     contributions: Optional[dict],
+    acwi_verdict: Optional[dict] = None,
 ) -> str:
     """Build the full HTML fragment for one (segment, strategy) pane.
 
@@ -396,6 +453,10 @@ def build_strategy_pane(
     contributions:
         Optional ``{category: DataFrame(dates x countries)}`` score
         building-block decomposition.
+    acwi_verdict:
+        Optional ACWI-relative verdict JSON (same strategy certified against
+        the vendor World index as sole benchmark). When provided, a
+        collapsible \"vs ACWI (sole benchmark)\" section is appended.
 
     Returns
     -------
@@ -524,6 +585,12 @@ def build_strategy_pane(
     # --- Validation scorecard ---
     parts.append(_section("Validation Scorecard", scorecard_from_verdict(verdict)))
 
+    # --- ACWI-relative certification (no figures; verdict-only) ---
+    if acwi_verdict is not None:
+        parts.append(_section(
+            "vs ACWI (sole benchmark)", acwi_section_body(acwi_verdict)
+        ))
+
     return "\n".join(parts)
 
 
@@ -597,11 +664,17 @@ h1 { font-size:1.25rem; margin-bottom:8px; padding-bottom:6px; }
 .sec-toggle:focus-visible { outline:2px solid #2563EB; outline-offset:1px; }
 .sec-arrow { display:inline-block; width:1em; }
 .sec-body { padding:2px 4px 8px 4px; }
+/* --- ACWI-relative certification section --- */
+.acwi-grade { margin:2px 0 8px 0; }
+.acwi-note { margin-top:2px; }
 """
 
 _DASH_JS = """
 var currentSeg = "%(default_seg)s";
 var currentStrat = "%(default_strat)s";
+// Section open/closed state keyed by normalized section TITLE — persists
+// across strategy/segment switches (an open "Performance" stays open).
+var openSecs = {};
 
 function _setActive(selector, attr, value) {
   var btns = document.querySelectorAll(selector);
@@ -614,13 +687,37 @@ function _setActive(selector, attr, value) {
   }
 }
 
+function secTitle(btn) {
+  // Normalized state key for a section header (lowercase trimmed title).
+  var span = btn.querySelector(".sec-title");
+  var txt = span ? span.textContent : btn.textContent;
+  return txt.replace(/[\\u25B8\\u25BE]/g, "").trim().toLowerCase();
+}
+
+function applySecState(btn, open) {
+  // Render one section header + body to the given open/closed state.
+  var body = btn.nextElementSibling;
+  if (!body) { return; }
+  body.style.display = open ? "block" : "none";
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  var arrow = btn.querySelector(".sec-arrow");
+  if (arrow) { arrow.textContent = open ? "\\u25BE" : "\\u25B8"; }
+}
+
 function showPane() {
   var panes = document.querySelectorAll(".pane");
   for (var i = 0; i < panes.length; i++) {
     panes[i].style.display = "none";
   }
   var target = document.getElementById(currentSeg + "-" + currentStrat);
-  if (target) { target.style.display = "block"; }
+  if (target) {
+    target.style.display = "block";
+    // Re-apply remembered section state to THIS pane's toggles.
+    var toggles = target.querySelectorAll(".sec-toggle");
+    for (var j = 0; j < toggles.length; j++) {
+      applySecState(toggles[j], !!openSecs[secTitle(toggles[j])]);
+    }
+  }
   _setActive(".seg-tab", "data-seg", currentSeg);
   _setActive(".strat-btn", "data-strat", currentStrat);
 }
@@ -637,14 +734,10 @@ function selectStrat(strat) {
 }
 
 function toggleSec(btn) {
-  // Collapsible section header: flip body visibility + arrow + aria state.
-  var body = btn.nextElementSibling;
-  if (!body) { return; }
-  var open = body.style.display !== "none";
-  body.style.display = open ? "none" : "block";
-  btn.setAttribute("aria-expanded", open ? "false" : "true");
-  var arrow = btn.querySelector(".sec-arrow");
-  if (arrow) { arrow.textContent = open ? "\\u25B8" : "\\u25BE"; }
+  // Flip the remembered state for this section title, then render.
+  var title = secTitle(btn);
+  openSecs[title] = !openSecs[title];
+  applySecState(btn, openSecs[title]);
 }
 
 """

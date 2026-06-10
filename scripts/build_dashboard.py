@@ -67,10 +67,23 @@ class StrategySpec:
     bmk_weight: float
     uses_base_weights: bool
     verdict_tag: str           # suffix after 'verdict_{seg}_prior_vm_p{p}_'
+    acwi_verdict_tag: str | None = None  # ACWI-relative run tag (None = no run)
 
     def verdict_name(self, segment: str, periodicity: int = 63) -> str:
         """Verdict JSON filename for *segment* (matches research_run tags)."""
         return f"verdict_{segment}_prior_vm_p{periodicity}_{self.verdict_tag}.json"
+
+    def acwi_verdict_name(
+        self, segment: str, periodicity: int = 63
+    ) -> str | None:
+        """ACWI-relative verdict JSON filename, or None if no ACWI run exists
+        for this strategy (e.g. blend50 — no ACWI blend runs)."""
+        if self.acwi_verdict_tag is None:
+            return None
+        return (
+            f"verdict_{segment}_prior_vm_p{periodicity}_"
+            f"{self.acwi_verdict_tag}.json"
+        )
 
 
 STRATEGIES: tuple[StrategySpec, ...] = (
@@ -82,6 +95,7 @@ STRATEGIES: tuple[StrategySpec, ...] = (
         bmk_weight=0.0,
         uses_base_weights=True,
         verdict_tag="active_captilt_capbmk",
+        acwi_verdict_tag="active_captilt_vsWorld",
     ),
     StrategySpec(
         key="eqw_active",
@@ -91,6 +105,7 @@ STRATEGIES: tuple[StrategySpec, ...] = (
         bmk_weight=0.0,
         uses_base_weights=False,
         verdict_tag="active_capbmk",
+        acwi_verdict_tag="active_vsWorld",
     ),
     StrategySpec(
         key="blend50",
@@ -205,6 +220,25 @@ def load_verdict(verdict_dir: str, spec: StrategySpec, segment: str,
         return json.load(f)
 
 
+def load_acwi_verdict(verdict_dir: str, spec: StrategySpec, segment: str,
+                      periodicity: int) -> dict | None:
+    """ACWI-relative verdict for *spec*, or None.
+
+    None when the strategy has no ACWI run (blend50) or the file is missing
+    (the per-pane \"vs ACWI\" section is optional decoration — a missing file
+    must not break the build)."""
+    name = spec.acwi_verdict_name(segment, periodicity)
+    if name is None:
+        return None
+    path = os.path.join(verdict_dir, name)
+    if not os.path.exists(path):
+        _log(f"WARNING: ACWI verdict missing: {path} — "
+             f"'vs ACWI' section omitted for [{segment}] '{spec.key}'.")
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -265,6 +299,9 @@ def main() -> None:
             verdict = load_verdict(
                 args.verdict_dir, spec, segment, args.periodicity
             )
+            acwi_verdict = load_acwi_verdict(
+                args.verdict_dir, spec, segment, args.periodicity
+            )
             bw = seg_inputs["base_weights"] if spec.uses_base_weights else None
             _log(f"[{segment}] building pane '{spec.key}' ({spec.label}) ...")
             panes[spec.key] = (
@@ -276,6 +313,7 @@ def main() -> None:
                     bw,
                     verdict,
                     seg_inputs["contributions"],
+                    acwi_verdict=acwi_verdict,
                 ),
             )
         segments[segment] = panes
