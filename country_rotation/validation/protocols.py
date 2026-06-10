@@ -96,6 +96,40 @@ def _net_period_returns(
     return result.period_results[_NET_COL].dropna()
 
 
+def _active_daily(result) -> pd.Series:
+    """ACTIVE daily return series = strategy daily minus benchmark daily.
+
+    ``active_daily = (daily_returns - daily_bmk_returns).dropna()`` aligned on
+    the common index.  An empty Series is returned when either daily series is
+    missing (degenerate Engine run with no daily curve).
+    """
+    sd = result.daily_returns
+    bd = result.daily_bmk_returns
+    if sd is None or bd is None:
+        return pd.Series(dtype=float)
+    common = sd.index.intersection(bd.index)
+    return (sd.loc[common] - bd.loc[common]).dropna()
+
+
+def _basis_equity(
+    scores: pd.DataFrame,
+    prices: pd.DataFrame,
+    cfg: BacktestConfig,
+    basis: str,
+) -> pd.Series:
+    """Run the Engine once and return the equity curve for the chosen basis.
+
+    ``basis='absolute'`` -> ``equity_curve`` of net period returns (existing
+    beta-driven path).  ``basis='active'`` -> ``equity_curve`` of the ACTIVE
+    daily series (strategy minus benchmark), so every downstream statistic
+    becomes an information-ratio-style (alpha) statistic.
+    """
+    result = Engine(scores, prices, cfg).run()
+    if basis == "active":
+        return equity_curve(_active_daily(result))
+    return equity_curve(result.period_results[_NET_COL].dropna())
+
+
 # ---------------------------------------------------------------------------
 # Parameter sweep + stability
 # ---------------------------------------------------------------------------
@@ -123,6 +157,7 @@ def parameter_sweep(
     prices: pd.DataFrame,
     base: BacktestConfig,
     grid: dict[str, tuple],
+    basis: str = "absolute",
 ) -> SweepResult:
     """Run 1-D parameter neighborhoods around ``base``.
 
@@ -134,6 +169,17 @@ def parameter_sweep(
 
     A run that raises is skipped with a ``warnings.warn`` — degenerate
     neighborhoods must not abort the sweep.
+
+    Parameters
+    ----------
+    basis :
+        Certification basis for the per-trial Sharpe.  ``"absolute"``
+        (default) uses the equity curve of net period returns — the
+        long-only, beta-driven book.  ``"active"`` uses the equity curve of
+        the ACTIVE daily series ``(daily_returns - daily_bmk_returns)``, so
+        ``sharpe_daily`` / ``sharpe_ann`` measure selection skill (an
+        information-ratio-style statistic).  Table shape is identical in both
+        modes; only the metric values change.
 
     Returns
     -------
@@ -152,16 +198,20 @@ def parameter_sweep(
             continue
         seen.add(key)
         try:
-            net = _net_period_returns(scores, prices, cfg)
+            result = Engine(scores, prices, cfg).run()
         except Exception as exc:  # degenerate config: skip, keep sweeping
             warnings.warn(f"parameter_sweep: skipping config {key}: {exc}")
             continue
-        eq = equity_curve(net)
+        if basis == "active":
+            returns = _active_daily(result)
+        else:
+            returns = result.period_results[_NET_COL].dropna()
+        eq = equity_curve(returns)
         sig = sharpe_significance(eq)
         row = {f.name: getattr(cfg, f.name) for f in fields(BacktestConfig)}
         row["sharpe_daily"] = sig.sharpe_daily
         row["sharpe_ann"] = sig.sharpe_ann
-        row["total_return"] = float((1.0 + net).prod() - 1.0)
+        row["total_return"] = float((1.0 + returns).prod() - 1.0)
         row["max_drawdown"] = float((eq / eq.cummax() - 1.0).min())
         rows.append(row)
 
@@ -459,6 +509,7 @@ def monte_carlo_null(
     cfg: BacktestConfig,
     n_sims: int = 200,
     seed: int = 0,
+    basis: str = "absolute",
 ) -> MonteCarloNull:
     """Random-signal null distribution through the same Engine config.
 
@@ -467,12 +518,23 @@ def monte_carlo_null(
     identical :class:`BacktestConfig` — only the signal is randomized,
     the selection/weighting/cost machinery is untouched.
 
+    Parameters
+    ----------
+    basis :
+        Certification basis for both the actual and the null Sharpes.
+        ``"absolute"`` (default) annualizes the net-period-return equity;
+        ``"active"`` annualizes the ACTIVE daily series
+        ``(daily_returns - daily_bmk_returns)``, giving an information-ratio
+        null.  The random books run through the same active-mode Engine cfg,
+        so they too expose ``daily_bmk_returns``.  ``p_value`` (add-one
+        smoothing) and the NaN→0 guard are unchanged.
+
     Returns
     -------
     MonteCarloNull
     """
     actual = sharpe_significance(
-        equity_curve(_net_period_returns(scores, prices, cfg))
+        _basis_equity(scores, prices, cfg, basis)
     ).sharpe_ann
 
     null_sharpes = np.empty(n_sims, dtype=float)
@@ -482,7 +544,7 @@ def monte_carlo_null(
             rng.random(scores.shape), index=scores.index, columns=scores.columns
         )
         sharpe = sharpe_significance(
-            equity_curve(_net_period_returns(random_scores, prices, cfg))
+            _basis_equity(random_scores, prices, cfg, basis)
         ).sharpe_ann
         null_sharpes[s] = 0.0 if math.isnan(sharpe) else sharpe
 

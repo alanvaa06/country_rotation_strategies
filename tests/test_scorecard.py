@@ -147,3 +147,97 @@ def test_thresholds_defaults():
     # Frozen — should raise on attribute assignment
     with pytest.raises((TypeError, AttributeError)):
         th.dsr = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Test 4: active basis — structure check
+# ---------------------------------------------------------------------------
+
+def test_compute_validation_active_basis_structure(synthetic_prices, synthetic_scores):
+    """basis='active' produces a well-formed report: same 3 bool verdict keys,
+    all report fields present, dsr in [0,1], runs without error."""
+    prices = synthetic_prices.iloc[:500]
+    countries = [c for c in prices.columns if c != "World"]
+    scores = synthetic_scores.loc[prices.index, countries]
+
+    cfg = _cfg()
+    grid = _grid()
+
+    report = sc.compute_validation(
+        scores, prices, cfg, grid,
+        n_boot=80, n_mc=8, n_folds=3, seed=0, basis="active",
+    )
+
+    for fld in ("sharpe", "psr", "dsr", "nw_vs_eqw", "bootstrap",
+                "sweep", "stability", "walkforward", "mc", "verdict"):
+        assert hasattr(report, fld)
+
+    expected_keys = {"no_overfitting", "param_stable", "statistically_significant"}
+    assert set(report.verdict.checks.keys()) == expected_keys
+    for key, val in report.verdict.checks.items():
+        assert isinstance(val, bool), f"checks[{key!r}] is {type(val)}, not bool"
+    assert report.verdict.overall == all(report.verdict.checks.values())
+    assert isinstance(report.verdict.notes, tuple)
+
+    assert math.isfinite(report.dsr.dsr)
+    assert 0.0 <= report.dsr.dsr <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Test 5: active basis differs from absolute
+# ---------------------------------------------------------------------------
+
+def test_active_basis_differs_from_absolute(synthetic_prices, synthetic_scores):
+    """The headline annualized Sharpe must differ between absolute and active
+    bases — active strips the benchmark drift (synthetic scores have no edge)."""
+    prices = synthetic_prices.iloc[:500]
+    countries = [c for c in prices.columns if c != "World"]
+    scores = synthetic_scores.loc[prices.index, countries]
+
+    cfg = _cfg()
+    grid = _grid()
+
+    rep_abs = sc.compute_validation(
+        scores, prices, cfg, grid,
+        n_boot=80, n_mc=8, n_folds=3, seed=0, basis="absolute",
+    )
+    rep_act = sc.compute_validation(
+        scores, prices, cfg, grid,
+        n_boot=80, n_mc=8, n_folds=3, seed=0, basis="active",
+    )
+
+    assert math.isfinite(rep_abs.sharpe.sharpe_ann)
+    assert math.isfinite(rep_act.sharpe.sharpe_ann)
+    assert abs(rep_abs.sharpe.sharpe_ann - rep_act.sharpe.sharpe_ann) > 1e-6
+
+    # Default basis is absolute (unchanged behavior)
+    rep_default = sc.compute_validation(
+        scores, prices, cfg, grid,
+        n_boot=80, n_mc=8, n_folds=3, seed=0,
+    )
+    assert rep_default.sharpe.sharpe_ann == pytest.approx(rep_abs.sharpe.sharpe_ann)
+
+
+# ---------------------------------------------------------------------------
+# Test 6: oracle on active basis still produces finite, honest stats
+# ---------------------------------------------------------------------------
+
+def test_oracle_active_significant(synthetic_prices):
+    """Oracle (forward-return-rank) scores on the active basis retain real
+    selection edge over equal-weight: stats run and are finite."""
+    prices = synthetic_prices.iloc[:500]
+    scores = _oracle_scores(prices)
+    scores = scores.reindex(prices.index).fillna(0.5)
+
+    cfg = _cfg()
+    grid = _grid()
+
+    report = sc.compute_validation(
+        scores, prices, cfg, grid,
+        n_boot=80, n_mc=8, n_folds=3, seed=42, basis="active",
+    )
+
+    assert math.isfinite(report.sharpe.t_stat)
+    assert math.isfinite(report.bootstrap.ci_low)
+    # The active verdict is a bool (may be True or False — don't over-assert)
+    assert isinstance(report.verdict.checks["statistically_significant"], bool)

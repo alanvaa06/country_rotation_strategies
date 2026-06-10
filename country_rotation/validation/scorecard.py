@@ -187,6 +187,7 @@ def compute_validation(
     n_mc: int = 100,
     n_folds: int = 5,
     seed: int = 0,
+    basis: str = "absolute",
 ) -> ValidationReport:
     """Run the full validation suite and assemble a :class:`ValidationReport`.
 
@@ -211,23 +212,50 @@ def compute_validation(
         Number of anchored walk-forward folds.
     seed :
         Seed for deterministic bootstrap and Monte-Carlo runs.
+    basis :
+        Certification basis for the headline statistics.  ``"absolute"``
+        (default) computes Sharpe-significance / PSR / DSR / bootstrap / MC on
+        the ABSOLUTE net return of the long-only fully-invested book — heavily
+        beta-driven.  ``"active"`` computes them on the strategy's ACTIVE daily
+        return ``(daily_returns - daily_bmk_returns)`` so they measure
+        selection skill (the annualized active Sharpe is the Information
+        Ratio).  The parameter sweep, stability summary, DSR trial Sharpes, and
+        Monte-Carlo null all switch to the active basis too.
+
+        ``nw_vs_eqw`` (active strategy vs equal-weight null) is unchanged in
+        either mode — it is already an active comparison.  ``walk_forward``
+        stays on the absolute basis in both modes: it is the OOS-consistency
+        gate and selects on IS net Sharpe; converting it is out of scope.
 
     Returns
     -------
     ValidationReport
     """
     # ------------------------------------------------------------------
-    # 1. Run strategy engine
+    # 1. Run strategy engine; build the headline equity for the basis
     # ------------------------------------------------------------------
     result = Engine(scores, prices, cfg).run()
     net_returns = result.period_results["portfolio_return_net"].dropna()
-    equity = equity_curve(net_returns)
 
     # Daily strategy returns (None if engine produced no daily curve)
     strategy_daily: pd.Series = (
         result.daily_returns if result.daily_returns is not None
         else pd.Series(dtype=float)
     )
+
+    if basis == "active":
+        # ACTIVE daily = strategy daily minus benchmark daily (common index).
+        bmk_daily: pd.Series = (
+            result.daily_bmk_returns if result.daily_bmk_returns is not None
+            else pd.Series(dtype=float)
+        )
+        active_idx = strategy_daily.index.intersection(bmk_daily.index)
+        active_daily = (
+            strategy_daily.loc[active_idx] - bmk_daily.loc[active_idx]
+        ).dropna()
+        equity = equity_curve(active_daily)
+    else:
+        equity = equity_curve(net_returns)
 
     # ------------------------------------------------------------------
     # 2. Equal-weight buy-and-hold null; Newey-West t-stat of excess
@@ -252,7 +280,7 @@ def compute_validation(
     # ------------------------------------------------------------------
     # 3. Parameter sweep + stability + DSR (trial sharpes from sweep table)
     # ------------------------------------------------------------------
-    sweep = parameter_sweep(scores, prices, cfg, grid)
+    sweep = parameter_sweep(scores, prices, cfg, grid, basis=basis)
     stability = stability_summary(sweep, cfg)
 
     trial_sharpes = sweep.table["sharpe_daily"].to_numpy(dtype=float)
@@ -264,7 +292,7 @@ def compute_validation(
     # 4. Walk-forward, Monte-Carlo null, PSR, Sharpe significance, bootstrap
     # ------------------------------------------------------------------
     wf = walk_forward(scores, prices, cfg, grid, n_folds=n_folds)
-    mc = monte_carlo_null(scores, prices, cfg, n_sims=n_mc, seed=seed)
+    mc = monte_carlo_null(scores, prices, cfg, n_sims=n_mc, seed=seed, basis=basis)
     psr = probabilistic_sharpe_ratio(equity, benchmark_sharpe=0.0)
     sharpe = sharpe_significance(equity)
     bootstrap = bootstrap_sharpe_ci(equity, n_boot=n_boot, seed=seed)

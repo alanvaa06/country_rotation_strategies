@@ -184,3 +184,81 @@ def test_monte_carlo_oracle_signal_beats_null(synthetic_prices):
 
     assert not math.isnan(mc.actual_sharpe_ann)
     assert mc.p_value <= 2.0 / 16.0
+
+
+# ---------------------------------------------------------------------------
+# 6. parameter_sweep — active (excess-over-benchmark) basis
+# ---------------------------------------------------------------------------
+
+def test_parameter_sweep_active_basis(synthetic_prices, synthetic_scores):
+    """basis='active' yields finite sharpes and differs from absolute basis."""
+    px = synthetic_prices.iloc[:500]
+    sc = synthetic_scores.iloc[:500]
+    base = _base_cfg()
+    grid = {"relative_selection_score": (3, 5)}
+
+    sweep_abs = proto.parameter_sweep(sc, px, base, grid, basis="absolute")
+    sweep_act = proto.parameter_sweep(sc, px, base, grid, basis="active")
+
+    # Same shape (basis only changes the metric values, not the rows/cols)
+    assert list(sweep_abs.table.columns) == list(sweep_act.table.columns)
+    assert len(sweep_abs.table) == len(sweep_act.table)
+    assert sweep_act.base_key == sweep_abs.base_key
+
+    # Active sharpes are finite
+    act_sharpe = sweep_act.table["sharpe_ann"].to_numpy(dtype=float)
+    assert np.isfinite(act_sharpe).all()
+
+    # Default basis is absolute and matches the explicit absolute call
+    sweep_default = proto.parameter_sweep(sc, px, base, grid)
+    assert np.allclose(
+        sweep_default.table["sharpe_daily"].to_numpy(dtype=float),
+        sweep_abs.table["sharpe_daily"].to_numpy(dtype=float),
+    )
+
+    # Active basis removes the benchmark drift: at least one trial differs
+    assert not np.allclose(
+        sweep_abs.table["sharpe_daily"].to_numpy(dtype=float),
+        sweep_act.table["sharpe_daily"].to_numpy(dtype=float),
+    )
+
+    # Deterministic: same inputs reproduce the table exactly
+    sweep_act2 = proto.parameter_sweep(sc, px, base, grid, basis="active")
+    assert np.allclose(
+        sweep_act.table["sharpe_daily"].to_numpy(dtype=float),
+        sweep_act2.table["sharpe_daily"].to_numpy(dtype=float),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. monte_carlo_null — active basis
+# ---------------------------------------------------------------------------
+
+def test_monte_carlo_null_active_basis(synthetic_prices, synthetic_scores):
+    """basis='active' gives a valid p in (0,1], is deterministic, and differs
+    from the absolute basis on the same inputs."""
+    px = synthetic_prices.iloc[:400]
+    sc = synthetic_scores.iloc[:400]
+    cfg = _base_cfg(relative_selection_score=5)
+
+    mc_act_a = proto.monte_carlo_null(sc, px, cfg, n_sims=15, seed=3, basis="active")
+    mc_act_b = proto.monte_carlo_null(sc, px, cfg, n_sims=15, seed=3, basis="active")
+    mc_abs = proto.monte_carlo_null(sc, px, cfg, n_sims=15, seed=3, basis="absolute")
+
+    # Deterministic under the same seed/basis
+    assert np.array_equal(mc_act_a.null_sharpes, mc_act_b.null_sharpes)
+    assert mc_act_a.p_value == mc_act_b.p_value
+
+    # Valid bounded p-value, finite summary stats
+    assert 0.0 < mc_act_a.p_value <= 1.0
+    assert np.isfinite(mc_act_a.null_mean)
+    assert np.isfinite(mc_act_a.null_q95)
+    assert not math.isnan(mc_act_a.actual_sharpe_ann)
+
+    # Default basis is absolute
+    mc_default = proto.monte_carlo_null(sc, px, cfg, n_sims=15, seed=3)
+    assert mc_default.actual_sharpe_ann == mc_abs.actual_sharpe_ann
+    assert np.array_equal(mc_default.null_sharpes, mc_abs.null_sharpes)
+
+    # Active actual sharpe differs from absolute (benchmark drift removed)
+    assert mc_act_a.actual_sharpe_ann != mc_abs.actual_sharpe_ann
