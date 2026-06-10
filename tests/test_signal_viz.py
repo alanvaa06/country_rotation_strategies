@@ -232,3 +232,84 @@ def test_fig_ic_distribution_empty_returns_none():
     assert fig_ic_distribution(
         pd.DataFrame({"IC": [float("nan"), float("nan")]}), "Absolute"
     ) is None
+
+
+# ---------------------------------------------------------------------------
+# TCA figures: fig_turnover / fig_cost_layers / fig_net_cumulative
+# ---------------------------------------------------------------------------
+
+def _turnover_series(n: int = 16) -> pd.Series:
+    rng = np.random.default_rng(5)
+    idx = pd.bdate_range("2021-01-04", periods=n, freq="63B")
+    values = np.concatenate([[1.0], rng.uniform(0.05, 0.4, n - 1)])
+    return pd.Series(values, index=idx, name="turnover")
+
+
+def _layer_irs() -> dict:
+    return {
+        "gross": 0.31,
+        "net_spread": 0.24,
+        "net_spread_expense": 0.05,
+        "net_mgmt_50bps": -0.11,
+    }
+
+
+def _active_layers(n: int = 300) -> dict:
+    rng = np.random.default_rng(9)
+    idx = pd.bdate_range("2022-01-03", periods=n)
+    gross = pd.Series(rng.normal(0.0004, 0.004, n), index=idx)
+    return {
+        "gross": gross,
+        "net_spread": gross - 0.00002,
+        "net_spread_expense": gross - 0.00002 - 50 / 252 / 1e4,
+        "net_mgmt_50bps": gross - 0.00002 - 100 / 252 / 1e4,
+    }
+
+
+def test_fig_turnover_png():
+    from country_rotation.reporting.signal_viz import fig_turnover
+
+    b64 = fig_turnover(_turnover_series())
+    assert isinstance(b64, str) and len(b64) > 0
+    assert _decodes_to_png(b64)
+
+
+def test_fig_turnover_empty_returns_none():
+    from country_rotation.reporting.signal_viz import fig_turnover
+
+    assert fig_turnover(None) is None
+    assert fig_turnover(pd.Series(dtype=float)) is None
+
+
+def test_fig_cost_layers_png():
+    from country_rotation.reporting.signal_viz import fig_cost_layers
+
+    b64 = fig_cost_layers(_layer_irs())
+    assert isinstance(b64, str) and len(b64) > 0
+    assert _decodes_to_png(b64)
+
+
+def test_fig_cost_layers_empty_returns_none():
+    from country_rotation.reporting.signal_viz import fig_cost_layers
+
+    assert fig_cost_layers(None) is None
+    assert fig_cost_layers({}) is None
+    # All-NaN layer IRs -> nothing to draw
+    assert fig_cost_layers({"gross": float("nan"),
+                            "net_spread": float("nan")}) is None
+
+
+def test_fig_net_cumulative_png():
+    from country_rotation.reporting.signal_viz import fig_net_cumulative
+
+    b64 = fig_net_cumulative(_active_layers())
+    assert isinstance(b64, str) and len(b64) > 0
+    assert _decodes_to_png(b64)
+
+
+def test_fig_net_cumulative_empty_returns_none():
+    from country_rotation.reporting.signal_viz import fig_net_cumulative
+
+    assert fig_net_cumulative(None) is None
+    assert fig_net_cumulative({}) is None
+    assert fig_net_cumulative({"gross": pd.Series(dtype=float)}) is None

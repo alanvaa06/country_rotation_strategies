@@ -30,6 +30,14 @@ signal_history_monthly.csv  month-end sample of signal_history (lighter,
                             for the dashboard)
 contributions_latest.csv    per-category x country rebased contributions at
                             the last score date
+tca.json                    transaction-cost analysis: turnover summary, top
+                            traded countries, cost layers in annualized bps,
+                            cumulative layer IRs (gross -> net spread ->
+                            +expense -> +mgmt), flat one-way breakeven bps,
+                            cost-model echo (configs/costs.json)
+turnover.csv                per-rebalance one-way turnover + per-period
+                            spread/commission/expense/mgmt cost columns from
+                            the TCA decomposition + gross active return
 ==========================  ===================================================
 
 A ``manifest.json`` at the run root records the run timestamp, data end
@@ -77,6 +85,7 @@ sys.path.insert(0, _SCRIPTS_DIR)
 _DEFAULT_CONFIG = "configs/default.json"
 _DEFAULT_REGISTRY = "configs/production.json"
 _DEFAULT_OUTPUT_DIR = "outputs/production"
+_DEFAULT_COSTS = os.path.join(_REPO_ROOT, "configs", "costs.json")
 
 _MIN_COUNTRIES = 8
 
@@ -290,7 +299,9 @@ def _last_252d_active(dr, db) -> dict:
     return {"window_days": int(window), "active_return_cum": cum, "ir_ann": ir}
 
 
-def _validation_stats(normalized, prices_with_bmk, cfg_bt, base_weights) -> dict:
+def _validation_stats(
+    normalized, prices_with_bmk, cfg_bt, base_weights, cost_bps=None
+) -> dict:
     """Full validation scorecard (slow path; seeded -> deterministic)."""
     from country_rotation.validation.scorecard import compute_validation
 
@@ -305,6 +316,7 @@ def _validation_stats(normalized, prices_with_bmk, cfg_bt, base_weights) -> dict
         seed=_SEED,
         basis="active",
         base_weights=base_weights,
+        cost_bps=cost_bps,
     )
     return {
         "overall": vr.verdict.overall,
@@ -335,6 +347,7 @@ def produce_strategy_artifacts(
     out_dir: str,
     quick: bool = True,
     base_cfg=None,
+    cost_model=None,
 ) -> dict:
     """Run one registry strategy end-to-end and write its artifact set.
 
@@ -343,18 +356,28 @@ def produce_strategy_artifacts(
     only side effects are the artifact files under ``out_dir``.  No
     randomness on the quick path; the full validation suite is seeded.
 
+    The engine ALWAYS runs with the per-country cost vector from
+    ``cost_model`` (default: ``configs/costs.json``) — weights are
+    unchanged (costs never feed selection), only net returns and the
+    transaction-cost column move; TCA artifacts (``tca.json`` +
+    ``turnover.csv``) and the ``metrics.json`` ``net_of_fee`` block are
+    derived from the same model.
+
     Returns the manifest info block: file inventory with row counts, latest
     rebalance dates and top-5 holdings.
     """
     import pandas as pd
     import research_run
 
+    from country_rotation.backtest import tca
     from country_rotation.backtest.engine import Engine
     from country_rotation.backtest.metrics import summary
     from country_rotation.config import BacktestConfig
 
     if base_cfg is None:
         base_cfg = BacktestConfig()
+    if cost_model is None:
+        cost_model = tca.load_cost_model(_DEFAULT_COSTS)
 
     inputs = build_strategy_inputs(processed, classification, strategy_cfg)
     universe = inputs["universe"]
@@ -376,19 +399,44 @@ def produce_strategy_artifacts(
         active_share=float(strategy_cfg["active_share"]),
     )
 
+    cost_bps = cost_model.cost_vector(universe)
     _log(
         f"[{strategy_cfg['id']}] engine run: {len(universe)} countries, "
         f"bmk='{inputs['bmk_col']}', construction="
-        f"{strategy_cfg['construction']}, periodicity={periodicity} ..."
+        f"{strategy_cfg['construction']}, periodicity={periodicity}, "
+        f"costs {cost_bps.min():g}-{cost_bps.max():g} bps one-way ..."
     )
     result = Engine(
-        normalized, inputs["prices_with_bmk"], cfg_bt, base_weights=base_weights
+        normalized, inputs["prices_with_bmk"], cfg_bt,
+        base_weights=base_weights, cost_bps=cost_bps,
     ).run()
     if result.historical_weights.empty:
         raise SystemExit(
             f"[production_run] ERROR: strategy '{strategy_cfg['id']}' "
             f"produced no rebalances (check periodicity vs data span)."
         )
+
+    # --- TCA: turnover + cost decomposition + breakeven ------------------
+    turnover_report = tca.turnover_analysis(result)
+    cost_report = tca.cost_decomposition(
+        result, cost_model, strategy_cfg["segment"]
+    )
+    try:
+        breakeven_bps = tca.breakeven_cost(result, cost_report.gross_ir)
+    except ValueError as exc:  # degenerate book: artifact still produced
+        warnings.warn(
+            f"[production_run] breakeven undefined for "
+            f"'{strategy_cfg['id']}': {exc}",
+            stacklevel=2,
+        )
+        breakeven_bps = None
+    layer_irs = dict(cost_report.layer_irs)
+    net_of_fee = {
+        "gross_ir": layer_irs.get("gross"),
+        "net_spread_ir": layer_irs.get("net_spread"),
+        "net_spread_expense_ir": layer_irs.get("net_spread_expense"),
+        "net_mgmt_50_ir": layer_irs.get("net_mgmt_50bps"),
+    }
 
     os.makedirs(out_dir, exist_ok=True)
     files: dict = {}
@@ -451,7 +499,8 @@ def produce_strategy_artifacts(
         _log(f"[{strategy_cfg['id']}] validation suite (n_boot={_N_BOOT}, "
              f"n_mc={_N_MC}, n_folds={_N_FOLDS}) — the slow part ...")
         validation = _validation_stats(
-            normalized, inputs["prices_with_bmk"], cfg_bt, base_weights
+            normalized, inputs["prices_with_bmk"], cfg_bt, base_weights,
+            cost_bps=cost_bps,
         )
 
     data_end = str(pd.Timestamp(inputs["prices"].index.max()).date())
@@ -471,6 +520,7 @@ def produce_strategy_artifacts(
         "composite_ic": composite_ic,
         "last_252d_active": last_252d,
         "equity_curve_last": equity_last,
+        "net_of_fee": net_of_fee,
         "validation": validation,
     })
     with open(os.path.join(out_dir, "metrics.json"), "w", encoding="utf-8") as f:
@@ -573,6 +623,62 @@ def produce_strategy_artifacts(
     )
     files["ic_series.csv"] = len(ic_series_df)
 
+    # --- tca.json (turnover + cost layers + breakeven + model echo) -----
+    tca_payload = research_run._json_safe({
+        "strategy_id": strategy_cfg["id"],
+        "segment": strategy_cfg["segment"],
+        "cost_model": {
+            "as_of": cost_model.as_of,
+            "commission_bps": cost_model.commission_bps,
+            "expense_ratio_bps": float(
+                cost_model.expense_ratio_bps[strategy_cfg["segment"]]
+            ),
+            "mgmt_fee_scenarios_bps": list(cost_model.mgmt_fee_scenarios_bps),
+            "universe_one_way_bps": {
+                c: float(v) for c, v in cost_bps.items()
+            },
+        },
+        "turnover": {
+            "ann_one_way": turnover_report.ann_one_way_turnover,
+            "avg_per_rebalance": turnover_report.avg_turnover,
+            "max_per_rebalance": turnover_report.max_turnover,
+            "total_name_changes": turnover_report.total_name_changes,
+        },
+        "country_avg_traded": {
+            c: float(v)
+            for c, v in turnover_report.country_avg_traded.items()
+        },
+        "cost_layers_ann_bps": {
+            "spread": cost_report.spread_ann_bps,
+            "commission": cost_report.commission_ann_bps,
+            "expense": cost_report.expense_ann_bps,
+            "mgmt": {
+                f"{s:g}bps": v for s, v in cost_report.mgmt_ann_bps.items()
+            },
+        },
+        "layer_irs": layer_irs,
+        "net_of_fee": net_of_fee,
+        "breakeven_bps": breakeven_bps,
+    })
+    with open(os.path.join(out_dir, "tca.json"), "w", encoding="utf-8") as f:
+        json.dump(tca_payload, f, indent=2)
+    files["tca.json"] = 1
+
+    # --- turnover.csv (per-rebalance turnover + TCA cost columns) -------
+    turnover_df = pd.concat(
+        [
+            turnover_report.per_rebalance.rename("turnover"),
+            cost_report.per_period,
+            pr["active_return"].rename("active_return"),
+        ],
+        axis=1,
+    )
+    turnover_df.to_csv(
+        os.path.join(out_dir, "turnover.csv"),
+        index_label="date", lineterminator="\n",
+    )
+    files["turnover.csv"] = len(turnover_df)
+
     top5 = weights_row.sort_values(ascending=False).head(5)
     _log(
         f"[{strategy_cfg['id']}] latest rebalance {allocations_latest['rebalance_date']}"
@@ -650,6 +756,13 @@ def main() -> None:
     _log(f"Registry '{args.registry}': producing "
          f"{len(strategies)} strategy(ies).")
 
+    # Cost model loaded ONCE — every strategy engine runs net of the
+    # per-country spread+commission vector (weights unchanged by costs).
+    from country_rotation.backtest.tca import load_cost_model
+
+    cost_model = load_cost_model(_DEFAULT_COSTS)
+    _log(f"Cost model '{_DEFAULT_COSTS}' (as_of {cost_model.as_of}).")
+
     # Ingest ONCE — shared across strategies.
     processed, classification = research_run.ingest(cfg)
     if "Price" not in processed:
@@ -672,6 +785,7 @@ def main() -> None:
             out_dir,
             quick=args.quick,
             base_cfg=cfg.backtest,
+            cost_model=cost_model,
         )
 
     manifest = {

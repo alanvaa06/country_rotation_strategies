@@ -28,14 +28,22 @@ from typing import Optional, Union
 
 import pandas as pd
 
-from country_rotation.reporting.dashboard import _DASH_CSS, _card, _section
+from country_rotation.reporting.dashboard import (
+    _DASH_CSS,
+    _card,
+    _section,
+    tca_section_body,
+)
 from country_rotation.reporting.report import _img_tag
 from country_rotation.reporting.signal_viz import (
     PALETTE12,
     _ranking_frame,
     fig_allocation_history,
+    fig_cost_layers,
     fig_ic_distribution,
+    fig_net_cumulative,
     fig_signal_ranking,
+    fig_turnover,
     signal_history_payload,
 )
 
@@ -322,6 +330,83 @@ def _ic_analysis_section_body(ic_series: "Optional[pd.DataFrame]") -> str:
     return "\n".join(parts)
 
 
+#: Canonical layer order for the cost-layer waterfall figure.
+_TCA_FIG_LAYERS = ("gross", "net_spread", "net_spread_expense",
+                   "net_mgmt_50bps")
+
+
+def _tca_analysis_section_body(
+    tca_payload: Optional[dict],
+    turnover_df: "Optional[pd.DataFrame]",
+) -> str:
+    """TCA section body from the ``tca.json`` / ``turnover.csv`` artifacts.
+
+    Three figures (turnover bars, cost-layer waterfall, per-rebalance net
+    cumulative active layers) plus the shared layer / top-traded tables and
+    breakeven chip via :func:`~country_rotation.reporting.dashboard.
+    tca_section_body`.  Empty string when ``tca_payload`` is missing —
+    the caller omits the section.
+    """
+    if not tca_payload:
+        return ""
+
+    layer_irs = tca_payload.get("layer_irs") or {}
+    layers_bps = tca_payload.get("cost_layers_ann_bps") or {}
+    mgmt_bps = layers_bps.get("mgmt") or {}
+    spread = layers_bps.get("spread")
+    commission = layers_bps.get("commission")
+    trading = (
+        (spread or 0.0) + (commission or 0.0)
+        if spread is not None or commission is not None
+        else None
+    )
+    cost_ann_bps = {
+        "trading": trading,
+        "expense": layers_bps.get("expense"),
+        "mgmt50": mgmt_bps.get("50bps"),
+    }
+
+    turnover_series = None
+    layers = None
+    if turnover_df is not None and not turnover_df.empty:
+        if "turnover" in turnover_df.columns:
+            turnover_series = turnover_df["turnover"]
+        needed = {"active_return", "spread_cost", "commission_cost"}
+        if needed <= set(turnover_df.columns):
+            gross = turnover_df["active_return"]
+            net_spread = (
+                gross - turnover_df["spread_cost"]
+                - turnover_df["commission_cost"]
+            )
+            layers = {"gross": gross, "net_spread": net_spread}
+            if "expense_drag" in turnover_df.columns:
+                layers["net_spread_expense"] = (
+                    net_spread - turnover_df["expense_drag"]
+                )
+                if "mgmt_drag_50bps" in turnover_df.columns:
+                    layers["net_mgmt_50bps"] = (
+                        layers["net_spread_expense"]
+                        - turnover_df["mgmt_drag_50bps"]
+                    )
+
+    figs = [
+        fig_turnover(turnover_series),
+        fig_cost_layers(
+            {k: layer_irs[k] for k in _TCA_FIG_LAYERS if k in layer_irs}
+        ),
+        fig_net_cumulative(layers),
+    ]
+    top_traded = pd.Series(tca_payload.get("country_avg_traded") or {},
+                           dtype=float)
+    return tca_section_body(
+        layer_irs,
+        cost_ann_bps,
+        figs,
+        top_traded=top_traded if len(top_traded) else None,
+        breakeven_bps=tca_payload.get("breakeven_bps"),
+    )
+
+
 #: metrics.json key -> (label, formatter) for the definition tables.
 _STAT_FORMATS = {
     "ann_return": ("Ann Return", lambda v: _pct(v, decimals=2)),
@@ -409,6 +494,8 @@ def build_strategy_pane(
     allocations: pd.DataFrame,
     history_monthly: pd.DataFrame,
     ic_series: Optional[pd.DataFrame] = None,
+    tca: Optional[dict] = None,
+    turnover: Optional[pd.DataFrame] = None,
 ) -> str:
     """HTML fragment for one deployed strategy (no shell wrapper).
 
@@ -425,8 +512,15 @@ def build_strategy_pane(
     ic_series:
         ``ic_series.csv`` frame (signal dates x ic_absolute/ic_relative).
         ``None`` or empty -> IC Analysis section is omitted.
+    tca:
+        Parsed ``tca.json`` artifact (turnover summary, cost layers,
+        breakeven).  ``None`` -> Transaction Costs section is omitted.
+    turnover:
+        ``turnover.csv`` frame (rebalance dates x turnover/cost columns)
+        powering the turnover bars and the net cumulative layer chart.
     """
     ic_body = _ic_analysis_section_body(ic_series)
+    tca_body = _tca_analysis_section_body(tca, turnover)
 
     parts = [
         f'<h2 class="strat-label">{entry.get("label", entry["id"])}</h2>',
@@ -439,6 +533,8 @@ def build_strategy_pane(
     ]
     if ic_body:
         parts.append(_section("IC Analysis", ic_body))
+    if tca_body:
+        parts.append(_section("Transaction Costs &amp; Turnover", tca_body))
     parts += [
         _section("Allocations",
                  _allocations_section_body(signal_latest, allocations)),
@@ -776,12 +872,37 @@ def build_dashboard(
                 stacklevel=2,
             )
 
+        tca: Optional[dict] = None
+        turnover: Optional[pd.DataFrame] = None
+        tca_path = sdir / "tca.json"
+        turnover_path = sdir / "turnover.csv"
+        if tca_path.exists():
+            try:
+                tca = _read_json(tca_path)
+                if turnover_path.exists():
+                    turnover = _read_frame(turnover_path)
+            except Exception as exc:
+                _warnings.warn(
+                    f"[production_dashboard] could not load TCA artifacts "
+                    f"for {entry['id']}: {exc}",
+                    stacklevel=2,
+                )
+                tca = None
+                turnover = None
+        else:
+            _warnings.warn(
+                f"[production_dashboard] tca.json absent for "
+                f"{entry['id']} — Transaction Costs section omitted.",
+                stacklevel=2,
+            )
+
         panes.append((
             entry["id"],
             entry.get("label", entry["id"]),
             build_strategy_pane(entry, metrics, signal_latest,
                                 allocations_latest, allocations,
-                                history_monthly, ic_series=ic_series),
+                                history_monthly, ic_series=ic_series,
+                                tca=tca, turnover=turnover),
         ))
         data_end = metrics.get("data_end", data_end)
         next_rebalance = allocations_latest.get(

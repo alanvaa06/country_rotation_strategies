@@ -478,6 +478,63 @@ def test_pane_sections_collapsible():
 
 
 # ---------------------------------------------------------------------------
+# Transaction Costs & Turnover section (optional cost_model)
+# ---------------------------------------------------------------------------
+
+def _make_cost_model(countries) -> object:
+    from country_rotation.backtest.tca import CostModel
+
+    return CostModel(
+        as_of="2026-06-10",
+        commission_bps=1.0,
+        spread_bps_by_country={c: 9.0 for c in countries},
+        max_spread_bps=9.0,
+        expense_ratio_bps={"DM": 50.0, "EM": 65.0, "World": 55.0},
+        mgmt_fee_scenarios_bps=(0.0, 50.0),
+    )
+
+
+def test_pane_tca_section_with_cost_model():
+    """cost_model -> 'Transaction Costs & Turnover' section: 3 TCA figures,
+    layer table (ann bps + IR) and a breakeven callout chip."""
+    from country_rotation.reporting.dashboard import build_strategy_pane
+
+    prices = _make_prices(400)
+    scores = _make_scores(prices)
+    cfg = _make_cfg()
+    verdict = _fake_verdict(overall=False)
+    contributions = _make_contributions(scores)
+    cost_model = _make_cost_model(scores.columns)
+
+    base = build_strategy_pane(scores, prices, cfg, None, verdict,
+                               contributions)
+    html = build_strategy_pane(scores, prices, cfg, None, verdict,
+                               contributions, cost_model=cost_model)
+
+    # One extra collapsible section (8 with contributions)
+    assert html.count('<button class="sec-toggle"') == 8
+    assert "Transaction Costs &amp; Turnover" in html
+    # 3 extra figures: turnover bars, cost-layer waterfall, net cumulative
+    extra = html.count("data:image/png;base64,") - base.count(
+        "data:image/png;base64,")
+    assert extra == 3, f"expected 3 extra TCA figures, got {extra}"
+
+    tca_body = html.split("Transaction Costs &amp; Turnover")[1]
+    # Layer table: cumulative layers with annualized bps + IR columns
+    for label in ("Gross active", "Spread + commission", "ETF expense",
+                  "Mgmt fee 50"):
+        assert label in tca_body, f"missing layer row '{label}'"
+    assert "Ann. cost (bps)" in tca_body and "Cumulative IR" in tca_body
+    # Breakeven callout chip
+    assert 'class="breakeven-chip"' in tca_body
+    assert "Breakeven" in tca_body
+
+    # No cost model -> section absent (pane unchanged)
+    assert "Transaction Costs" not in base
+    assert base.count('<button class="sec-toggle"') == 7
+
+
+# ---------------------------------------------------------------------------
 # Benchmark-identity badge + "vs ACWI (sole benchmark)" section
 # ---------------------------------------------------------------------------
 

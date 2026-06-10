@@ -17,6 +17,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from country_rotation.backtest import tca as tca_module
 from country_rotation.backtest.benchmarks import equal_weight_buy_hold
 from country_rotation.backtest.engine import Engine
 from country_rotation.backtest.ic import ic_stats, information_coefficient
@@ -40,6 +41,11 @@ from country_rotation.reporting.report import (
     table_risk,
     table_weights_latest,
 )
+from country_rotation.reporting.signal_viz import (
+    fig_cost_layers,
+    fig_net_cumulative,
+    fig_turnover,
+)
 
 __all__ = [
     "acwi_section_body",
@@ -47,8 +53,11 @@ __all__ = [
     "evidence_grade",
     "render_dashboard",
     "stat_cards",
+    "tca_section_body",
     "verdict_banner",
 ]
+
+_TRADING_DAYS_PER_YEAR = 252.0
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +410,173 @@ def scorecard_from_verdict(verdict: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Transaction Costs & Turnover (shared body builder + live computation)
+# ---------------------------------------------------------------------------
+
+#: Cumulative cost layers shown in the TCA table:
+#: (layer_irs key, row label, cost_ann_bps key — None for the gross row).
+_TCA_LAYER_ROWS = (
+    ("gross", "Gross active", None),
+    ("net_spread", "&minus; Spread + commission", "trading"),
+    ("net_spread_expense", "&minus; ETF expense", "expense"),
+    ("net_mgmt_50bps", "&minus; Mgmt fee 50 bps", "mgmt50"),
+)
+
+#: Canonical layer order for the cost-layer waterfall figure.
+_TCA_FIG_LAYERS = ("gross", "net_spread", "net_spread_expense",
+                   "net_mgmt_50bps")
+
+
+def tca_section_body(
+    layer_irs: dict,
+    cost_ann_bps: dict,
+    figs: list,
+    top_traded: Optional[pd.Series] = None,
+    breakeven_bps: Optional[float] = None,
+    top_n: int = 8,
+) -> str:
+    """Body HTML of a \"Transaction Costs & Turnover\" section.
+
+    Shared by the research dashboard (live TCA from an in-pane engine run)
+    and the production dashboard (tca.json / turnover.csv artifacts).
+
+    Parameters
+    ----------
+    layer_irs:
+        ``{layer key: annualized IR}`` (``tca.CostReport.layer_irs`` keys).
+    cost_ann_bps:
+        ``{"trading": spread+commission, "expense": ..., "mgmt50": ...}``
+        annualized bps per drag layer.
+    figs:
+        Base64 PNG strings (``None`` entries skipped) — turnover bars,
+        cost-layer waterfall, net cumulative lines.
+    top_traded:
+        Optional avg one-way traded notional per country (descending);
+        the top ``top_n`` become the turnover-contributors table.
+    breakeven_bps:
+        Optional flat one-way bps at which the active IR reaches zero
+        (rendered as a callout chip).
+    """
+    parts: list[str] = []
+
+    if breakeven_bps is not None and not np.isnan(breakeven_bps):
+        parts.append(
+            '<div class="breakeven-chip"><strong>Breakeven cost: '
+            f"{breakeven_bps:.0f} bps one-way</strong> — flat per-trade "
+            "cost at which the gross active IR reaches zero.</div>"
+        )
+
+    for b64 in figs:
+        if b64:
+            parts.append(_img_tag(b64, "TCA figure"))
+
+    rows = []
+    for key, label, bps_key in _TCA_LAYER_ROWS:
+        if key not in layer_irs:
+            continue
+        bps = cost_ann_bps.get(bps_key) if bps_key else None
+        rows.append(
+            f"<tr><td>{label}</td>"
+            f"<td>{_fmt(bps, decimals=1) if bps_key else '—'}</td>"
+            f"<td>{_fmt(layer_irs[key], decimals=3)}</td></tr>"
+        )
+    if rows:
+        parts.append("<h4 class='tbl-title'>Cost Layers (cumulative)</h4>")
+        parts.append(
+            "<table class='tca-table'><thead><tr><th>Layer</th>"
+            "<th>Ann. cost (bps)</th><th>Cumulative IR</th></tr></thead>"
+            "<tbody>" + "".join(rows) + "</tbody></table>"
+        )
+
+    if top_traded is not None and len(top_traded.dropna()) > 0:
+        top = top_traded.dropna().head(top_n)
+        t_rows = "".join(
+            f"<tr><td>{c}</td><td>{_fmt(v, pct=True, decimals=2)}</td></tr>"
+            for c, v in top.items()
+        )
+        parts.append(
+            f"<h4 class='tbl-title'>Top {len(top)} Turnover "
+            "Contributors</h4>"
+            "<table class='tca-table'><thead><tr><th>Country</th>"
+            "<th>Avg one-way traded / rebalance</th></tr></thead>"
+            f"<tbody>{t_rows}</tbody></table>"
+        )
+
+    return "\n".join(parts)
+
+
+def _pane_tca_body(engine_result, cost_model, cfg: BacktestConfig) -> str:
+    """Live TCA body for a research pane (engine result + cost model).
+
+    Empty string on any failure — the section is optional decoration and
+    must never break a dashboard build.
+    """
+    try:
+        segment = (
+            cfg.bmk if cfg.bmk in cost_model.expense_ratio_bps else "World"
+        )
+        turn = tca_module.turnover_analysis(engine_result, bmk=cfg.bmk)
+        decomp = tca_module.cost_decomposition(
+            engine_result, cost_model, segment, bmk=cfg.bmk
+        )
+        try:
+            breakeven = tca_module.breakeven_cost(
+                engine_result, decomp.gross_ir
+            )
+        except ValueError:
+            breakeven = None
+        layer_irs = dict(decomp.layer_irs)
+
+        # Daily active layers for the cumulative chart.
+        layers = None
+        dr = engine_result.daily_returns
+        db = engine_result.daily_bmk_returns
+        if dr is not None and db is not None:
+            active = (dr - db).dropna()
+            trading = (
+                (decomp.per_period["spread_cost"]
+                 + decomp.per_period["commission_cost"])
+                .reindex(active.index)
+                .fillna(0.0)
+            )
+            expense_daily = (
+                float(cost_model.expense_ratio_bps[segment])
+                / _TRADING_DAYS_PER_YEAR / 1e4
+            )
+            net_spread = active - trading
+            net_spread_expense = net_spread - expense_daily
+            layers = {
+                "gross": active,
+                "net_spread": net_spread,
+                "net_spread_expense": net_spread_expense,
+            }
+            if 50.0 in cost_model.mgmt_fee_scenarios_bps:
+                layers["net_mgmt_50bps"] = (
+                    net_spread_expense - 50.0 / _TRADING_DAYS_PER_YEAR / 1e4
+                )
+
+        figs = [
+            fig_turnover(turn.per_rebalance),
+            fig_cost_layers(
+                {k: layer_irs[k] for k in _TCA_FIG_LAYERS if k in layer_irs}
+            ),
+            fig_net_cumulative(layers),
+        ]
+        cost_ann_bps = {
+            "trading": decomp.spread_ann_bps + decomp.commission_ann_bps,
+            "expense": decomp.expense_ann_bps,
+            "mgmt50": decomp.mgmt_ann_bps.get(50.0),
+        }
+        return tca_section_body(
+            layer_irs, cost_ann_bps, figs,
+            top_traded=turn.country_avg_traded,
+            breakeven_bps=breakeven,
+        )
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Strategy pane
 # ---------------------------------------------------------------------------
 
@@ -439,6 +615,7 @@ def build_strategy_pane(
     contributions: Optional[dict],
     acwi_verdict: Optional[dict] = None,
     bmk_label: Optional[str] = None,
+    cost_model=None,
 ) -> str:
     """Build the full HTML fragment for one (segment, strategy) pane.
 
@@ -468,6 +645,12 @@ def build_strategy_pane(
         headline stats are measured against), e.g. \"Vendor EM index — MSCI
         Emerging Markets equivalent\". Rendered as an always-visible badge
         under the verdict banner.
+    cost_model:
+        Optional :class:`country_rotation.backtest.tca.CostModel`. When
+        provided, a collapsible \"Transaction Costs & Turnover\" section is
+        computed LIVE from the pane's engine run (turnover bars, cost-layer
+        waterfall, net cumulative active lines, layer table, breakeven
+        chip). ``None`` -> section omitted.
 
     Returns
     -------
@@ -576,6 +759,14 @@ def build_strategy_pane(
         if ic_stats_results.get(method):
             ic_parts.append(table_ic_stats(ic_stats_results[method], method))
     parts.append(_section("IC Analysis", "\n".join(ic_parts)))
+
+    # --- Transaction Costs & Turnover (optional cost model) ---
+    if cost_model is not None:
+        tca_body = _pane_tca_body(engine_result, cost_model, cfg)
+        if tca_body:
+            parts.append(_section(
+                "Transaction Costs &amp; Turnover", tca_body
+            ))
 
     # --- Score building-block decomposition ---
     if contributions:
@@ -686,6 +877,13 @@ h1 { font-size:1.25rem; margin-bottom:8px; padding-bottom:6px; }
 /* --- ACWI-relative certification section --- */
 .acwi-grade { margin:2px 0 8px 0; }
 .acwi-note { margin-top:2px; }
+/* --- TCA section (breakeven chip + layer tables) --- */
+.breakeven-chip { display:inline-block; font-size:0.82rem; color:#1e3a5f;
+                  background:#eef4fb; border:1px solid #bfdbfe;
+                  border-radius:999px; padding:5px 14px; margin:2px 0 10px 0; }
+.tca-table { max-width:560px; }
+.tca-table td:last-child { text-align:right;
+                           font-variant-numeric:tabular-nums; }
 """
 
 _DASH_JS = """

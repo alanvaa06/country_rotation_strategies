@@ -152,6 +152,54 @@ def _write_strategy_artifacts(sdir: Path, sid: str, entry: dict) -> None:
     ic_df.to_csv(sdir / "ic_series.csv", index_label="date",
                  lineterminator="\n")
 
+    # tca.json — TCA summary (production_run schema)
+    (sdir / "tca.json").write_text(json.dumps({
+        "strategy_id": sid,
+        "segment": entry["segment"],
+        "cost_model": {
+            "as_of": "2026-06-10",
+            "commission_bps": 1.0,
+            "expense_ratio_bps": 65.0 if entry["segment"] == "EM" else 50.0,
+            "mgmt_fee_scenarios_bps": [0.0, 50.0],
+            "universe_one_way_bps": {c: 13.0 for c in countries},
+        },
+        "turnover": {
+            "ann_one_way": 1.1842, "avg_per_rebalance": 0.2951,
+            "max_per_rebalance": 1.0, "total_name_changes": 24,
+        },
+        "country_avg_traded": {
+            c: round(0.08 - 0.01 * i, 4) for i, c in enumerate(countries)
+        },
+        "cost_layers_ann_bps": {
+            "spread": 31.1, "commission": 2.6, "expense": 65.0,
+            "mgmt": {"0bps": 0.0, "50bps": 50.2},
+        },
+        "layer_irs": {
+            "gross": 0.2917, "net_spread": 0.2214,
+            "net_spread_expense": 0.0712, "net_mgmt_0bps": 0.0712,
+            "net_mgmt_50bps": -0.0481,
+        },
+        "net_of_fee": {
+            "gross_ir": 0.2917, "net_spread_ir": 0.2214,
+            "net_spread_expense_ir": 0.0712, "net_mgmt_50_ir": -0.0481,
+        },
+        "breakeven_bps": 57.3,
+    }), encoding="utf-8")
+
+    # turnover.csv — per-rebalance turnover + TCA cost columns
+    turnover_df = pd.DataFrame({
+        "turnover": np.concatenate([[1.0],
+                                    rng.uniform(0.1, 0.5, len(reb_dates) - 1)]),
+        "spread_cost": rng.uniform(0.0001, 0.0006, len(reb_dates)),
+        "commission_cost": rng.uniform(0.00001, 0.00005, len(reb_dates)),
+        "expense_drag": np.full(len(reb_dates), 0.0016),
+        "mgmt_drag_0bps": np.zeros(len(reb_dates)),
+        "mgmt_drag_50bps": np.full(len(reb_dates), 0.0012),
+        "active_return": rng.normal(0.002, 0.01, len(reb_dates)),
+    }, index=reb_dates)
+    turnover_df.to_csv(sdir / "turnover.csv", index_label="date",
+                       lineterminator="\n")
+
 
 @pytest.fixture()
 def run_dir(tmp_path: Path) -> Path:
@@ -239,8 +287,9 @@ def test_build_dashboard_structure(run_dir: Path):
     assert "100vh" in html and "overflow:hidden" in html
     assert "overflow-y:auto" in html
 
-    # >= 4 base64 PNGs per pane (ranking + allocation history + 2 IC distribution)
-    assert html.count("data:image/png;base64,") >= 8
+    # >= 7 base64 PNGs per pane (ranking + allocation history + 2 IC
+    # distribution + 3 TCA figures)
+    assert html.count("data:image/png;base64,") >= 14
 
 
 # ---------------------------------------------------------------------------
@@ -250,15 +299,16 @@ def test_build_dashboard_structure(run_dir: Path):
 def test_latest_signal_default_open(run_dir: Path):
     html = _build(run_dir)
 
-    # 5 collapsible sections per pane x 2 panes (added IC Analysis)
-    assert html.count('<button class="sec-toggle"') == 10
-    # Latest Signal open in both panes; the other 4 sections collapsed
+    # 6 collapsible sections per pane x 2 panes (IC Analysis + TCA added)
+    assert html.count('<button class="sec-toggle"') == 12
+    # Latest Signal open in both panes; the other 5 sections collapsed
     assert html.count('aria-expanded="true"') == 2
-    assert html.count('aria-expanded="false"') == 8
+    assert html.count('aria-expanded="false"') == 10
     assert html.count('class="sec-body" style="display:block"') == 2
-    assert html.count('class="sec-body" style="display:none"') == 8
+    assert html.count('class="sec-body" style="display:none"') == 10
     for title in ("Latest Signal", "Signal Evolution", "Allocations",
-                  "Metrics Detail", "IC Analysis"):
+                  "Metrics Detail", "IC Analysis",
+                  "Transaction Costs &amp; Turnover"):
         assert html.count(f'<span class="sec-title">{title}</span>') == 2
 
     # openSecs persistence pre-seeded with the open section
@@ -325,6 +375,45 @@ def test_ic_analysis_section_absent_without_artifacts(run_dir: Path, tmp_path):
 
     html = _build(run_dir)
     assert "IC Analysis" not in html
+    assert "Country Rotation — Production Dashboard" in html  # no crash
+
+
+# ---------------------------------------------------------------------------
+# 3c. Transaction Costs & Turnover section
+# ---------------------------------------------------------------------------
+
+def test_tca_section_present_with_artifacts(run_dir: Path):
+    """TCA section renders 3 figures + layer table + top-traded table +
+    breakeven chip per pane when tca.json/turnover.csv are present."""
+    html = _build(run_dir)
+
+    assert html.count(
+        '<span class="sec-title">Transaction Costs &amp; Turnover</span>'
+    ) == 2
+    # Breakeven callout chip with the fixture value
+    assert html.count('class="breakeven-chip"') == 2
+    assert "57 bps one-way" in html
+    # Layer table rows + headers
+    for label in ("Gross active", "Spread + commission", "ETF expense",
+                  "Mgmt fee 50"):
+        assert label in html, f"missing layer row '{label}'"
+    assert "Ann. cost (bps)" in html and "Cumulative IR" in html
+    # Top-8 turnover contributors (6 fixture countries -> top 6)
+    assert "Turnover Contributors" in html
+    # 3 TCA figures per pane on top of the 4 existing -> >= 7 each
+    assert html.count("data:image/png;base64,") >= 14
+
+
+def test_tca_section_absent_without_artifacts(run_dir: Path):
+    """TCA section is omitted (no crash) when tca.json/turnover.csv absent."""
+    for sid in _STRATEGY_IDS:
+        for name in ("tca.json", "turnover.csv"):
+            path = run_dir / sid / name
+            if path.exists():
+                path.unlink()
+
+    html = _build(run_dir)
+    assert "Transaction Costs" not in html
     assert "Country Rotation — Production Dashboard" in html  # no crash
 
 

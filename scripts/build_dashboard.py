@@ -46,6 +46,7 @@ from country_rotation.config import BacktestConfig  # noqa: E402
 _DEFAULT_CONFIG = "configs/default.json"
 _DEFAULT_OUTPUT = "outputs/research/strategy_dashboard.html"
 _DEFAULT_VERDICT_DIR = "outputs/research"
+_DEFAULT_COSTS = "configs/costs.json"
 
 _MIN_COUNTRIES = 8
 
@@ -294,6 +295,11 @@ def main() -> None:
         "--output", default=_DEFAULT_OUTPUT,
         help="Path to write the dashboard HTML.",
     )
+    parser.add_argument(
+        "--costs", default=_DEFAULT_COSTS,
+        help="Cost-model JSON for the per-pane Transaction Costs & Turnover "
+             "section (set to '' to omit the section).",
+    )
     args = parser.parse_args()
 
     # Lazy imports: keep --help fast and import-side-effect free.
@@ -306,6 +312,14 @@ def main() -> None:
     )
 
     cfg_platform = load_config(args.config)
+
+    # Cost model loaded ONCE — passed to every pane for the live TCA section.
+    cost_model = None
+    if args.costs:
+        from country_rotation.backtest.tca import load_cost_model
+
+        cost_model = load_cost_model(args.costs)
+        _log(f"Cost model '{args.costs}' (as_of {cost_model.as_of}).")
 
     # Ingest ONCE — shared across segments and strategies.
     processed, classification = research_run.ingest(cfg_platform)
@@ -338,6 +352,7 @@ def main() -> None:
                     seg_inputs["contributions"],
                     acwi_verdict=acwi_verdict,
                     bmk_label=BMK_IDENTITY.get(segment),
+                    cost_model=cost_model,
                 ),
             )
         segments[segment] = panes

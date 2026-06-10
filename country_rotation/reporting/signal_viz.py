@@ -24,8 +24,11 @@ import pandas as pd
 
 __all__ = [
     "fig_allocation_history",
+    "fig_cost_layers",
     "fig_ic_distribution",
+    "fig_net_cumulative",
     "fig_signal_ranking",
+    "fig_turnover",
     "signal_history_payload",
 ]
 
@@ -390,6 +393,199 @@ def fig_ic_distribution(
 
         fig.suptitle(f"{method_label} IC — history & distribution",
                      fontsize=11, fontweight="bold")
+        fig.tight_layout()
+        return _fig_to_base64(fig)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# TCA figures: turnover, cost layers, net cumulative active
+# ---------------------------------------------------------------------------
+
+_CAL_DAYS_PER_YEAR = 365.25
+
+#: Canonical labels for the tca.cost_decomposition layer keys.
+_LAYER_LABELS = {
+    "gross": "Gross active",
+    "net_spread": "Net of spread + commission",
+    "net_spread_expense": "+ ETF expense drag",
+    "net_mgmt_0bps": "+ Mgmt fee 0 bps",
+    "net_mgmt_50bps": "+ Mgmt fee 50 bps",
+}
+
+#: Layer key -> color (gross blue, deepening drags toward red).
+_LAYER_COLORS = {
+    "gross": "#2563EB",
+    "net_spread": "#0EA5E9",
+    "net_spread_expense": "#F59E0B",
+    "net_mgmt_0bps": "#14B8A6",
+    "net_mgmt_50bps": "#DC2626",
+}
+
+
+def _layer_label(key: str) -> str:
+    return _LAYER_LABELS.get(key, key.replace("_", " "))
+
+
+def _layer_color(key: str, i: int) -> str:
+    return _LAYER_COLORS.get(key, PALETTE12[i % len(PALETTE12)])
+
+
+def fig_turnover(turnover: Optional[pd.Series]) -> Optional[str]:
+    """Per-rebalance one-way turnover bars + annualized turnover annotation.
+
+    Parameters
+    ----------
+    turnover:
+        One-way turnover per rebalance (datetime index, engine convention:
+        first period = full deployment).
+
+    Returns
+    -------
+    base64 PNG string or None on empty/unusable input.
+    """
+    try:
+        if turnover is None or len(turnover.dropna()) == 0:
+            return None
+        t = turnover.dropna().astype(float)
+
+        fig, ax = plt.subplots(figsize=(10, 3.2))
+        width = 14 if isinstance(t.index, pd.DatetimeIndex) else 0.8
+        ax.bar(t.index, t.values, width=width, color="#2563EB", alpha=0.75)
+
+        avg = float(t.mean())
+        ax.axhline(avg, color="#F59E0B", lw=1.6, ls="--",
+                   label=f"avg / rebalance {avg:.1%}")
+
+        # Annualized one-way turnover from the calendar span when possible.
+        ann_txt = ""
+        if isinstance(t.index, pd.DatetimeIndex) and len(t) > 1:
+            years = (t.index[-1] - t.index[0]).days / _CAL_DAYS_PER_YEAR
+            if years > 0:
+                ann_txt = f"ann. one-way turnover ≈ {t.sum() / years:.0%}"
+        if ann_txt:
+            ax.text(
+                0.99, 0.95, ann_txt, transform=ax.transAxes,
+                fontsize=9, va="top", ha="right", fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                          edgecolor="#d1d5db", alpha=0.92),
+            )
+
+        ax.set_title("Turnover per Rebalance (one-way)",
+                     fontsize=12, fontweight="bold")
+        ax.set_ylabel("Turnover")
+        ax.yaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda v, _: f"{v:.0%}")
+        )
+        ax.legend(fontsize=8, loc="upper left")
+        ax.grid(True, alpha=0.25, axis="y")
+        fig.tight_layout()
+        return _fig_to_base64(fig)
+    except Exception:
+        return None
+
+
+def fig_cost_layers(layer_irs: Optional[dict]) -> Optional[str]:
+    """Horizontal bar 'waterfall' of cumulative cost-layer IRs.
+
+    Parameters
+    ----------
+    layer_irs:
+        ``{layer_key: annualized IR}`` in cumulative-drag order, e.g.
+        ``gross -> net_spread -> net_spread_expense -> net_mgmt_50bps``
+        (``tca.CostReport.layer_irs``).  NaN layers are skipped.
+
+    Returns
+    -------
+    base64 PNG string or None on empty/unusable input.
+    """
+    try:
+        if not layer_irs:
+            return None
+        items = [
+            (k, float(v)) for k, v in layer_irs.items()
+            if v is not None and np.isfinite(float(v))
+        ]
+        if not items:
+            return None
+
+        keys = [k for k, _ in items]
+        values = [v for _, v in items]
+        y = np.arange(len(items))[::-1]  # gross on top
+
+        fig, ax = plt.subplots(figsize=(8.6, 0.62 * len(items) + 1.6))
+        colors = [_layer_color(k, i) for i, k in enumerate(keys)]
+        ax.barh(y, values, color=colors, alpha=0.85, height=0.62)
+        ax.axvline(0, color="black", lw=0.9)
+
+        span = max(abs(v) for v in values) or 1.0
+        for yi, v in zip(y, values):
+            ax.text(
+                v + (0.03 * span if v >= 0 else -0.03 * span), yi,
+                f"{v:+.2f}", va="center",
+                ha="left" if v >= 0 else "right",
+                fontsize=9.5, fontweight="bold", color="#111827",
+            )
+
+        ax.set_yticks(y)
+        ax.set_yticklabels([_layer_label(k) for k in keys], fontsize=9.5)
+        ax.set_xlabel("Information Ratio (ann.)", fontsize=9)
+        ax.set_xlim(min(0.0, min(values)) - 0.18 * span,
+                    max(0.0, max(values)) + 0.18 * span)
+        ax.set_title("Active IR by Cumulative Cost Layer",
+                     fontsize=12, fontweight="bold")
+        ax.grid(True, alpha=0.25, axis="x")
+        fig.tight_layout()
+        return _fig_to_base64(fig)
+    except Exception:
+        return None
+
+
+def fig_net_cumulative(
+    active_layers: Optional[dict],
+) -> Optional[str]:
+    """Cumulative active return per cost layer (one line per layer).
+
+    Parameters
+    ----------
+    active_layers:
+        ``{layer_key: active return series}`` — daily series on the research
+        path, per-rebalance series on the production-artifact path.  Each
+        series is cumulated arithmetically (``cumsum``), the standard for
+        active (difference) returns.
+
+    Returns
+    -------
+    base64 PNG string or None on empty/unusable input.
+    """
+    try:
+        if not active_layers:
+            return None
+        series = {
+            k: s.dropna().astype(float)
+            for k, s in active_layers.items()
+            if s is not None and len(s.dropna()) > 1
+        }
+        if not series:
+            return None
+
+        fig, ax = plt.subplots(figsize=(10, 3.8))
+        for i, (key, s) in enumerate(series.items()):
+            cum = s.cumsum()
+            ax.plot(cum.index, cum.values, lw=1.5,
+                    color=_layer_color(key, i), label=_layer_label(key))
+
+        ax.axhline(0, color="#6b7280", lw=0.8)
+        ax.set_title("Cumulative Active Return by Cost Layer",
+                     fontsize=12, fontweight="bold")
+        ax.set_ylabel("Cumulative active return")
+        ax.yaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda v, _: f"{v:.0%}")
+        )
+        ax.legend(fontsize=8.5, loc="upper left")
+        ax.grid(True, alpha=0.25)
+        ax.margins(x=0.0)
         fig.tight_layout()
         return _fig_to_base64(fig)
     except Exception:

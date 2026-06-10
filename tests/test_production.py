@@ -37,6 +37,8 @@ _ARTIFACTS = (
     "signal_history_monthly.csv",
     "contributions_latest.csv",
     "ic_series.csv",
+    "tca.json",
+    "turnover.csv",
 )
 
 
@@ -229,6 +231,53 @@ def test_produce_strategy_artifacts_end_to_end(tmp_path):
     assert "ic_relative" in ic_series.columns
     assert len(ic_series) >= 1
     assert info["files"]["ic_series.csv"] == len(ic_series)
+
+    # metrics.json net_of_fee — layer IRs ordered gross >= net_spread >=
+    # +expense >= +mgmt50 (each layer adds a cumulative drag).
+    nof = metrics["net_of_fee"]
+    assert set(nof) == {
+        "gross_ir", "net_spread_ir", "net_spread_expense_ir", "net_mgmt_50_ir"
+    }
+    assert nof["gross_ir"] >= nof["net_spread_ir"]
+    assert nof["net_spread_ir"] >= nof["net_spread_expense_ir"]
+    assert nof["net_spread_expense_ir"] >= nof["net_mgmt_50_ir"]
+
+    # tca.json — turnover summary, layers, breakeven, cost-model echo.
+    tca_payload = json.loads((out_dir / "tca.json").read_text(encoding="utf-8"))
+    assert tca_payload["strategy_id"] == "TEST_em"
+    assert tca_payload["segment"] == "EM"
+    assert set(tca_payload["cost_model"]["universe_one_way_bps"]) == set(
+        _COUNTRIES
+    )
+    assert tca_payload["turnover"]["ann_one_way"] > 0
+    assert tca_payload["turnover"]["max_per_rebalance"] >= (
+        tca_payload["turnover"]["avg_per_rebalance"]
+    )
+    assert set(tca_payload["country_avg_traded"]) == set(_COUNTRIES)
+    layers_bps = tca_payload["cost_layers_ann_bps"]
+    assert layers_bps["spread"] > 0
+    assert layers_bps["commission"] > 0
+    assert layers_bps["expense"] == pytest.approx(65.0, abs=3.0)  # EM ratio
+    assert set(tca_payload["layer_irs"]) >= {
+        "gross", "net_spread", "net_spread_expense", "net_mgmt_50bps"
+    }
+    assert tca_payload["net_of_fee"] == nof
+    assert tca_payload["breakeven_bps"] is None or isinstance(
+        tca_payload["breakeven_bps"], float
+    )
+
+    # turnover.csv — per-rebalance turnover + TCA cost columns, one row
+    # per rebalance, turnover column matches the engine convention.
+    turnover_df = pd.read_csv(
+        out_dir / "turnover.csv", index_col=0, parse_dates=True
+    )
+    assert len(turnover_df) == len(hw)
+    for col in ("turnover", "spread_cost", "commission_cost",
+                "expense_drag", "active_return"):
+        assert col in turnover_df.columns, f"turnover.csv missing '{col}'"
+    assert turnover_df["turnover"].iloc[0] == pytest.approx(1.0)  # deployment
+    assert (turnover_df["spread_cost"] >= 0).all()
+    assert info["files"]["turnover.csv"] == len(turnover_df)
 
 
 def test_bmk_index_override_uses_vendor_world_column(tmp_path):
