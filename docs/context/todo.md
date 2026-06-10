@@ -47,6 +47,19 @@
 - [done] TCA stage 2 — cost_bps threaded through protocols/scorecard/report; research_run.py --costs (net-of-cost re-runs EM/DM cap_tilt, `_tca` verdicts with cost_model/tca/stats_net blocks); production_run.py always costed (tca.json + turnover.csv + metrics net_of_fee); 'Transaction Costs & Turnover' sections in BOTH dashboards (3 new signal_viz figs + layer table + breakeven chip); 213 tests green
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)
 
+## Production-Readiness Goal (2026-06-10)
+- [done] A1. Test suite green baseline — 213 passed, 0 failed (2026-06-10)
+- [done] A2. Strategies re-verified: full production_run re-executed; verdict JSONs match docs; byte-determinism BUG found (1-ULP numpy reduction jitter in DM turnover_ann/breakeven_bps) and FIXED (fsum + 1e-10 quantization) — proof: 20/20 artifacts hash-identical across consecutive full runs
+- [done] A3. Overfitting forensics re-verified against artifacts via adversarial fact-check agent (power decompositions, alpha decomposition, signatures — all confirmed)
+- [done] A4. Thesis claims fact-checked: 18 load-bearing numbers vs primary artifacts, 15 confirmed exactly, 3 prompt-side conflations corrected in drafts
+- [done] B1. scripts/pipeline.py — quarterly orchestrator (recert|production|dashboards|quarterly, --dry-run), registry-driven, 14 tests
+- [done] B2. README updated: production-pipeline section, scripts table, 227 test count
+- [done] B3. Legacy root scripts: KEEP, parity-locked (README documents; deletion requires frozen fixtures first — unchanged decision)
+- [done] C1. Academic paper -> docs/research/paper_country_rotation_2026.md (abstract through appendices, all numbers artifact-verified)
+- [done] D1. EM pitch script -> docs/pitch/EM_captilt_pitch_script.md (data exploration -> signal -> construction -> results -> forensics -> ask + Q&A)
+- [done] D2. DM pitch script -> docs/pitch/DM_vsACWI_pitch_script.md (built around the alpha-decomposition finding; composition-bet positioning + Q&A)
+- [done] RUNBOOK_quarterly_recert.md rewritten to current registry + pipeline.py + kill-switch monitors
+
 ## Dashboard UX overhaul (2026-06-09)
 - [done] 1. Evidence-grade verdict banner (tier function + per-gate chips, replaces FAIL-wall)
 - [done] 2. Collapsible section sub-headers (default all collapsed, button toggles)

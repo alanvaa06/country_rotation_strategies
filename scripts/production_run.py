@@ -68,6 +68,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 import os
 import subprocess
 import sys
@@ -484,7 +485,14 @@ def produce_strategy_artifacts(
         if len(pr) > 1
         else {}
     )
-    turnover_ann = float(pr["turnover"].mean() * ppy) if len(pr) else None
+    # fsum + round(…, 10): the engine's per-period turnover scalars carry
+    # 1-ULP run-to-run jitter (alignment-dependent numpy reductions in the
+    # parity-locked engine) — exact summation plus 1e-10 quantization keeps
+    # metrics.json byte-deterministic.
+    _to = pr["turnover"].dropna()
+    turnover_ann = (
+        round(math.fsum(_to) / len(_to) * ppy, 10) if len(_to) else None
+    )
     composite_ic = _composite_ic_stats(normalized, inputs["prices"], periodicity)
     last_252d = (
         _last_252d_active(dr, db)

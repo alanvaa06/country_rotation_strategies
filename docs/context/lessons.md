@@ -10,3 +10,4 @@
 - Subagent background processes die with the subagent; long detached runs must be launched by the orchestrator session (harness-tracked background) or via committed runner scripts.
 - Statistical significance must be measured on the finest honest grid: period-level stats (n≈65) discard the power available in the daily curve (n≈4,000) of the same strategy.
 - Verify statistics against canonical sources with hand-computed tests at 1e-12 tolerance (caught a PSR kurtosis-term bug and a DSR mean-term bug written "from first principles").
+- "Byte-deterministic" claims must be PROVEN by hashing two consecutive real runs: numpy/pandas reductions jitter 1 ULP across processes (memory-alignment-dependent pairwise summation) — scalars derived from long series need math.fsum + fixed-precision quantization at the artifact boundary; in-process unit tests of determinism cannot catch this.

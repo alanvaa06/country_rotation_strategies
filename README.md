@@ -128,9 +128,45 @@ pip install -r requirements.txt
 python -m pytest
 ```
 
+### Production pipeline (one command)
+
+The deployed-strategy registry `configs/production.json` drives everything.
+The quarterly cycle — after refreshing `Inputs/` — is one command:
+
+```bash
+# Full cycle: re-certification runs -> production artifacts -> dashboards
+python scripts/pipeline.py quarterly
+
+# Stages individually (each independently re-runnable):
+python scripts/pipeline.py recert        # research_run re-certs (net-of-cost) per deployed strategy
+python scripts/pipeline.py production    # allocations / signals / TCA -> outputs/production/run_{data_end}/
+python scripts/pipeline.py dashboards    # production + research HTML dashboards
+
+# Validate registry + data and print the command plan without executing:
+python scripts/pipeline.py quarterly --dry-run
+```
+
+Allocations land in `outputs/production/run_{YYYYMMDD}/{strategy_id}/allocations_latest.json`
+(latest weights + next rebalance date). The run directory is stamped with the
+**data end date**, and artifacts are byte-deterministic given the same inputs
+(seeded validation; the run timestamp lives only in `manifest.json`).
+Decision protocol (gate reading, registry updates, kill-switch criteria):
+[docs/research/RUNBOOK_quarterly_recert.md](docs/research/RUNBOOK_quarterly_recert.md).
+
 ### Scripts
 
 All entry-point scripts live in `scripts/`. They require `Inputs/` data (see note below).
+
+| Script | Purpose |
+|--------|---------|
+| `pipeline.py` | **Quarterly orchestrator** — recert → production → dashboards, registry-driven |
+| `production_run.py` | Periodic per-strategy artifacts (allocations, signals, metrics, TCA) |
+| `build_production_dashboard.py` | Self-contained production dashboard HTML over the latest run |
+| `research_run.py` | Per-segment research pipeline: screen/prior → composite → validation → report |
+| `build_dashboard.py` | Research strategy dashboard (segment tabs × strategy toggle) |
+| `overfit_forensics.py` | Deep overfitting diagnostics for a candidate (signatures, power, alpha decomposition) |
+| `spec_tournament.py` | Pre-registered 6-spec signal tournament (screen-window IC + BH-FDR + lockbox) |
+| `build_scores.py` / `run_backtest.py` / `build_report.py` | Single-stage building blocks (scores, backtest, HTML report) |
 
 **Build factor scores (one segment):**
 ```bash
@@ -182,7 +218,7 @@ python scripts/research_run.py --segment DM --track prior --quick
 python -m pytest
 ```
 
-Approximately **120 tests** across:
+**227 tests** across:
 - Unit tests for every module (transforms, catalog, composite, engine, metrics, IC, benchmarks, statistics, protocols, scorecard, report).
 - **Parity tests** (`tests/test_parity.py`) — regression suite that locks the new package to legacy script behavior; any behavioral divergence fails CI.
 - **Leakage guards** (`tests/test_integrity.py`) — deliberate look-ahead injection; bfill classified as dirty; ffill classified as clean.
