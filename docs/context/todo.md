@@ -31,4 +31,6 @@
 - [blocked] Extend price/fundamental history pre-2010 — NO vendor access to earlier periods (confirmed 2026-06-09). Revisit only if MSCI/index proxies become available.
 - [done] Pre-registered robustness: DM prior-vm @21d monthly — monthly DEGRADES vs quarterly; ruled out (docs/research/segment_verdicts_2026-06-09.md Addendum §1)
 - [done] Quarterly re-run protocol set up + determinism verified bit-for-bit — runbook docs/research/RUNBOOK_quarterly_recert.md; run each quarter after Inputs/ refresh
+- [done] Cap-weighted mandate benchmark (--bmk-source index) + blended configs (--mode blend 0.3/0.5) — tested + self-verified; selection skill MC-significant, IC significant (World rel @63 t 2.29), IR vs cap negative (construction tilt)
+- [pending] PRE-REGISTERED NEXT: benchmark-aware construction — cap-index base weights ± composite-score tilts under a TE budget; re-run DM/World vs cap index; expect realized IR to reflect the MC-significant selection skill
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)

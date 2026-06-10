@@ -70,8 +70,40 @@ The original verdicts above computed Sharpe-t / PSR / DSR / bootstrap on the **a
 
 This does not change the strategic conclusion (extend history / accrue live quarters; quarterly is the right cadence) — it corrects the *framing*: certify on alpha, not on a beta-laden absolute Sharpe.
 
+## Addendum 2026-06-09 (c) — Cap-weighted mandate benchmark + blended configs
+
+`research_run.py` gains `--bmk-source {eqw,index}` (index = vendor cap-weighted segment column from Price.xlsx; verified cap signature: corr(DM, US)=0.94 vs 0.66 for eqw basket; index beat eqw basket +3.8%/yr 2010-2025) and `--mode blend --bmk-weight w` (core-satellite). Verdicts now also carry `mandate_stats` (TE/IR/beta/capture vs chosen benchmark) and `composite_ic` (full-window IC stats, both methods). All runs vm @63d, active basis, full params. Self-verified by two independent recompute passes (all checks PASS; engine blend decomposition exact to 3.5e-18; NW-vs-eqw bit-invariant across benchmarks).
+
+### Results
+
+| Run | IR (ann) | act t | MC p | TE | beta | IC rel: mean / t / hit |
+|---|---|---|---|---|---|---|
+| DM vs eqw (ref) | +0.33 | 1.34 | 0.050 | — | — | — |
+| **DM vs cap index** | **−0.14** | −0.57 | **0.040** | 10.0% | 0.86 | +0.043 / 1.32 / 0.62 |
+| **World vs cap index** | −0.04 | −0.16 | **0.050** | 10.9% | 0.89 | **+0.062 / 2.29 / 0.62** |
+| DM cap blend 30 | −0.15* | −0.59 | 0.040 | 7.0% | 0.90 | same sleeve |
+| DM cap blend 50 | −0.15* | −0.60 | 0.040 | 5.0% | 0.93 | same sleeve |
+
+\*active return scales by (1−w); t-stat scale-invariant. TE scales exactly (1−w): 10.0% → 7.0% → 5.0%. Beta follows w + (1−w)·β_sleeve to ±0.0002.
+
+### The decomposition this exposes (the key insight)
+
+Strategy total return = **market beta** + **construction tilt** + **selection alpha**:
+- **Selection alpha is real and statistically significant**: MC random-selection null — which holds construction constant — rejects at **p = 0.040 (DM) / 0.050 (World)**, the first hard gate this program has passed. Selection beats random selection.
+- **Construction tilt is the drag**: the equal-weight top-5 book is structurally anti-US/anti-cap; the cap index beat the eqw basket +3.8%/yr 2010–2025, swamping the ~+2.2%/yr selection alpha → negative IR vs the investable mandate benchmark (−1.6%/yr).
+- **Signal quality (IC)**: World composite relative IC @63d (the exact configuration traded) **t = 2.29, p ≈ 0.013, n = 64, ICIR 0.29, hit 62% — statistically significant**. DM t = 1.32. Monthly-grid IC weaker (t ≤ 0.92) — signal lives at the quarterly horizon, consistent with the cadence finding. Caveat: 8 informational IC cells measured; the significant one is the pre-specified traded cell (World/relative/63), but family-wise this is borderline — treat as strong-but-single-cell evidence.
+
+### Goal scorecard (stable + statistically significant IR and IC within a segment)
+- **IC: ACHIEVED (World, relative, quarterly)** — t 2.29.
+- **Selection skill: ACHIEVED** — MC p ≤ 0.05 in both DM and World vs cap benchmark.
+- **IR: NOT achieved** — vs eqw +0.33 (t 1.34, ns); vs cap mandate negative. The blocker is construction, not signal.
+- **Stability**: vs eqw fully stable (100% grid positive); vs cap consistently negative (stability frac 0.00) — the tilt dominates every config.
+
+### Next lever (pre-register before running)
+Benchmark-aware construction: build the book as cap-index weights ± active tilts from the composite score (e.g. cap-weight base, overweight top-5 / underweight bottom by a TE budget), instead of an equal-weight top-5 sleeve. This removes the structural anti-cap tilt so the realized IR reflects the (already MC-significant) selection skill. Blend mode is the right wrapper afterwards: TE scales exactly (1−w) for mandate sizing.
+
 ## Reproducibility
-- `python scripts/research_run.py --segment {World|DM|EM} --track {screen|prior} [--prior-set vm] --periodicity {21|63} [--basis active|absolute]`
+- `python scripts/research_run.py --segment {World|DM|EM} --track {screen|prior} [--prior-set vm] --periodicity {21|63} [--basis active|absolute] [--bmk-source eqw|index] [--mode active|blend --bmk-weight w]`
 - `--basis active` is the default (alpha certification). `--basis absolute` is diagnostic only (beta-laden).
 - Artifacts carry periodicity + basis suffix to prevent collisions: `verdict_{seg}_{track}[_{prior_set}]_p{periodicity}_{basis}.json` (+ `report_*.html`, `screening_*.xlsx`). All gitignored, local.
 - Code state: branch `dev`; full pytest suite green (125).

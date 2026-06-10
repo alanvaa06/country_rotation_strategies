@@ -419,6 +419,8 @@ def build_verdict_payload(
     category_weights=None,
     validation_report=None,
     extra_notes=(),
+    mandate_stats=None,
+    composite_ic=None,
 ) -> dict:
     """Assemble the verdict JSON payload (both tracks).
 
@@ -494,6 +496,9 @@ def build_verdict_payload(
             "segment": args.segment,
             "track": args.track,
             "basis": args.basis,
+            "bmk_source": getattr(args, "bmk_source", "eqw"),
+            "mode": getattr(args, "mode", "active"),
+            "bmk_weight": getattr(args, "bmk_weight", 0.0),
             "quick": bool(args.quick),
             "periodicity": args.periodicity,
             "n_countries": len(universe),
@@ -504,6 +509,8 @@ def build_verdict_payload(
             "category_weights": category_weights,
             "verdict": verdict,
             "stats": stats,
+            "mandate_stats": mandate_stats,
+            "composite_ic": composite_ic,
             "runtime_seconds": round(runtime_s, 1),
         }
     )
@@ -597,6 +604,24 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
              "selection skill, beta-neutral); 'absolute' uses the long-only "
              "book's total return (beta-laden — diagnostic only).",
     )
+    parser.add_argument(
+        "--bmk-source", choices=("eqw", "index"), default="eqw",
+        help="Benchmark series: 'eqw' (default) = synthetic equal-weight "
+             "universe (honest rotation null); 'index' = vendor cap-weighted "
+             "segment index column from the Price input (investable mandate "
+             "benchmark, e.g. MSCI-style DM/EM/World).",
+    )
+    parser.add_argument(
+        "--mode", choices=("active", "blend"), default="active",
+        help="Engine mode: 'active' (default) = 100%% selection sleeve, "
+             "benchmark used for comparison only; 'blend' = core-satellite "
+             "book holding bmk_weight in the benchmark.",
+    )
+    parser.add_argument(
+        "--bmk-weight", type=float, default=0.0,
+        help="Benchmark weight for --mode blend (e.g. 0.3 or 0.5). "
+             "Ignored in active mode (forced 0.0 by the engine).",
+    )
     args = parser.parse_args()
 
     t0 = time.time()
@@ -631,13 +656,27 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
 
     prices = price_df[universe].copy()
     prices_with_bmk = prices.copy()
-    prices_with_bmk[args.segment] = equal_weight_index(prices)
+    if args.bmk_source == "index":
+        # Vendor cap-weighted segment index level (e.g. MSCI-style 'DM'
+        # column carried in the raw Price file) — the investable mandate
+        # benchmark. Verified cap-weight signature: corr(DM, US) ~ 0.94
+        # vs 0.63 for the equal-weight basket.
+        if args.segment not in price_df.columns:
+            raise SystemExit(
+                f"[research_run] ERROR: --bmk-source index requires a "
+                f"'{args.segment}' index column in the Price input."
+            )
+        prices_with_bmk[args.segment] = price_df[args.segment]
+        _log(f"Benchmark: vendor cap-weighted '{args.segment}' index column.")
+    else:
+        prices_with_bmk[args.segment] = equal_weight_index(prices)
+        _log(f"Benchmark: synthetic equal-weight '{args.segment}' universe.")
 
     cfg_bt = dataclasses.replace(
         cfg.backtest,
         bmk=args.segment,
-        bmk_weight=0.0,
-        mode="active",
+        bmk_weight=args.bmk_weight,
+        mode=args.mode,
         periodicity=args.periodicity,
         selection_criteria="relative",
     )
@@ -662,6 +701,10 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
     if args.track == "prior" and args.prior_set != "full":
         tag += f"_{args.prior_set}"
     tag += f"_p{args.periodicity}_{args.basis}"
+    if args.bmk_source == "index":
+        tag += "_capbmk"
+    if args.mode == "blend":
+        tag += f"_blend{int(round(args.bmk_weight * 100))}"
     verdict_path = os.path.join(args.output_dir, f"verdict_{tag}.json")
     screen_result = None
     prior_evidence = None
@@ -778,6 +821,29 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
     )
     _log(f"Report -> {report_info['path']} ({report_info['n_figures']} figures)")
 
+    # Mandate stats: TE / IR / beta / capture of the actual book vs the chosen
+    # benchmark, from the report's daily metrics summary.
+    mandate_stats = report_info.get("summary")
+
+    # Composite signal IC (informational, full window, both methods) — the
+    # signal-quality evidence the verdict should carry alongside the IR.
+    from country_rotation.backtest import ic as ic_module
+
+    composite_ic = {}
+    for method in ("absolute", "relative"):
+        ic_df = ic_module.information_coefficient(
+            normalized, prices, args.periodicity, method
+        )
+        composite_ic[method] = ic_module.ic_stats(ic_df["IC"].dropna())
+    _log(
+        "Composite IC: "
+        + "; ".join(
+            f"{m}: mean={s['mean_ic']:+.4f} t={s['t_stat']:+.2f} "
+            f"icir={s['icir']:+.3f} hit={s['hit_rate']:.2f}"
+            for m, s in composite_ic.items()
+        )
+    )
+
     runtime_s = time.time() - t0
     payload = build_verdict_payload(
         args,
@@ -789,6 +855,8 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         category_weights=category_weights,
         validation_report=validation_report,
         extra_notes=extra_notes,
+        mandate_stats=mandate_stats,
+        composite_ic=composite_ic,
     )
     with open(verdict_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
