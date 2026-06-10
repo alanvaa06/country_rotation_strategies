@@ -16,6 +16,11 @@ a single process:
   (after ``dropna``); relative = top N by score change over
   ``periodicity`` index rows, falling back to top N by score level when
   no previous date exists.
+* Selection ``top_n_level`` (additive, NOT legacy): top N by score
+  LEVEL at ``d_sel`` — the canonical Asness-Moskowitz-Pedersen (2013)
+  rank-of-signal-level selection.  Works with every weighting branch;
+  under Cap_Tilt the bottom-N underweights come from the SAME level
+  signal (N lowest levels).
 * Weighting (~431-560): Equal = 1/N; Risk_Parity = inverse variance over
   ``risk_parity_lookback`` daily observations EXCLUDING ``d_sel``
   (min 10 lookback dates / 5 clean return rows, several equal-weight
@@ -139,8 +144,11 @@ class Engine:
     # ------------------------------------------------------------------
     def _validate_inputs(self) -> None:
         """Replicates legacy ``_validate_inputs`` (~126-151) + mode check."""
-        if self.selection_criteria not in ("absolute", "relative"):
-            raise ValueError("selection_criteria must be 'absolute' or 'relative'")
+        if self.selection_criteria not in ("absolute", "relative", "top_n_level"):
+            raise ValueError(
+                "selection_criteria must be 'absolute', 'relative' or "
+                "'top_n_level'"
+            )
         if self.cfg.weighting_method not in ("Equal", "Risk_Parity", "Cap_Tilt"):
             raise ValueError(
                 "weighting_method must be 'Equal', 'Risk_Parity' or 'Cap_Tilt'"
@@ -194,6 +202,8 @@ class Engine:
             return []
         if self.selection_criteria == "absolute":
             return self._select_absolute(d_sel)
+        if self.selection_criteria == "top_n_level":
+            return self._select_top_n_level(d_sel)
         return self._select_relative(d_sel)
 
     def _select_absolute(self, d_sel) -> list:
@@ -223,6 +233,14 @@ class Engine:
         """Legacy ``_select_relative`` (~346-380): top N by score change."""
         signal = self._relative_signal(d_sel)
         return signal.nlargest(self.cfg.relative_selection_score).index.tolist()
+
+    def _select_top_n_level(self, d_sel) -> list:
+        """Top N countries by score LEVEL at ``d_sel`` (additive, not legacy).
+
+        Canonical AMP-2013 selection: rank the signal level itself and take
+        the ``relative_selection_score`` highest names."""
+        scores = self.normalized_score.loc[d_sel, self.countries].dropna()
+        return scores.nlargest(self.cfg.relative_selection_score).index.tolist()
 
     # ------------------------------------------------------------------
     # weighting
@@ -347,18 +365,19 @@ class Engine:
         """One signal series for Cap_Tilt top AND bottom ranking.
 
         'relative' -> the exact ``_select_relative`` signal (score change,
-        score-level fallback).  'absolute' -> score level at ``d_sel``
-        (the series behind the threshold rule), so the bottom set is the
-        symmetric mirror: lowest score levels."""
+        score-level fallback).  'absolute' and 'top_n_level' -> score level
+        at ``d_sel``, so the bottom set is the symmetric mirror: lowest
+        score levels."""
         if d_sel not in self.normalized_score.index:
             return pd.Series(dtype=float)
-        if self.selection_criteria == "absolute":
+        if self.selection_criteria in ("absolute", "top_n_level"):
             return self.normalized_score.loc[d_sel, self.countries].dropna()
         return self._relative_signal(d_sel)
 
     def _signal_top(self, signal: pd.Series) -> list:
         """Top names from the signal series — mirrors the existing
-        selection rules: 'relative' = top N, 'absolute' = level > threshold."""
+        selection rules: 'relative'/'top_n_level' = top N,
+        'absolute' = level > threshold."""
         if self.selection_criteria == "absolute":
             return signal[signal > self.cfg.absolute_selection_score].index.tolist()
         return signal.nlargest(self.cfg.relative_selection_score).index.tolist()

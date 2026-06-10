@@ -36,4 +36,6 @@
   - [done] Cap_Tilt engine branch (Engine(base_weights=...), active_share budget, long-only clip, sum-1 conservation) + base_weights threaded through parameter_sweep/walk_forward/monte_carlo_null/compute_validation/build_report; 7 new tests, suite 132 green incl. parity
   - [done] Per-segment Cap_Tilt runs (DM/World/EM vs cap index) via research_run.py --construction cap_tilt; verdict JSONs in outputs/research/
 - [done] Multi-strategy toggle dashboard — reporting/dashboard.py (build_strategy_pane + render_dashboard, segment tabs World/DM/EM + strategy toggle, default Cap_Tilt) + scripts/build_dashboard.py (9 panes, one self-contained HTML); 6 TDD tests
+- [done] Engine 'top_n_level' selection (canonical AMP-2013 rank-of-level, all weighting branches incl. Cap_Tilt) + pre-registered 6-spec signal tournament (scripts/spec_tournament.py: screen-window IC + BH-FDR + one-shot lockbox); winners World/DM = S5_amp_ey_change (q .019/.093), EM = S1 (not significant); 145 tests green
+- [pending] Winner scorecard runs + verdict (S5_amp_ey_change full validation per segment) — task #34
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)

@@ -18,7 +18,7 @@ class DataConfig:
 
 @dataclass(frozen=True)
 class BacktestConfig:
-    selection_criteria: str = "relative"       # 'absolute' | 'relative'
+    selection_criteria: str = "relative"       # 'absolute' | 'relative' | 'top_n_level'
     absolute_selection_score: float = 0.75
     relative_selection_score: int = 5
     weighting_method: str = "Equal"            # 'Equal' | 'Risk_Parity' | 'Cap_Tilt'
