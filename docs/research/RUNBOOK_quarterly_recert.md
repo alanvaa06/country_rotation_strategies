@@ -61,7 +61,12 @@ Interpretation is PER BOOK — the 2010–2025 regime-conditioned attribution
 Caveats: tercile "Risk-off" ≈ 35% of all days by construction (relative
 state, not a tail event); use the JM labels (persistence-enforced), lagged —
 never same-day; conditional cells carry multiplicity (36 examined) — treat
-as context, not significance. This section is diagnostic only; any *trading*
+as context, not significance. Replication (Test 4, 2026-06-10): the EM
+transitional concentration is **EM-specific** — World passed only
+directionally (t 0.39, null p 0.67), DM failed, HMM flips both; note the
+sibling books carry ~zero selection alpha to distribute, so the test had
+limited discriminating power. Do NOT extend the transitional-mix
+interpretation beyond the EM book. This section is diagnostic only; any *trading*
 use of regimes requires its own pre-registered spec and a trial-ledger entry
 first. Diagnostic script: outputs/research/_regime_attribution.py (re-run
 after each Inputs/ + RoRo refresh).
