@@ -206,6 +206,22 @@ def test_research_run_smoke(tmp_path):
     assert (out_dir / "report_World_screen_p21_active.html").exists()
 
 
+def test_research_run_amp_ey_requires_prior_track():
+    """--signal amp_ey is a prior-track signal: track=screen must exit
+    before any data is touched (guard fires right after argparse)."""
+    out = _run(
+        [
+            "scripts/research_run.py",
+            "--segment", "World",
+            "--track", "screen",
+            "--signal", "amp_ey",
+        ]
+    )
+    assert out.returncode != 0
+    assert "--signal amp_ey" in out.stderr
+    assert "--track prior" in out.stderr
+
+
 def test_build_scores_smoke(tmp_path):
     idx = pd.bdate_range("2020-01-01", periods=_N_DAYS)
     rng = np.random.default_rng(2)

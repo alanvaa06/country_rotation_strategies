@@ -46,7 +46,14 @@ Usage
 -----
     python scripts/research_run.py --segment World [--track screen|prior]
         [--quick] [--periodicity 63] [--fdr-q 0.10]
-        [--construction eqw|cap_tilt]
+        [--construction eqw|cap_tilt] [--signal blend|amp_ey]
+
+``--signal amp_ey`` swaps the composite for the S5_amp_ey_change tournament
+winner (scripts/spec_tournament.py): 0.5*relative_rank(Momentum_12_1) +
+0.5*relative_rank(EarningsYieldTTM), direction-applied, cross-sectionally
+normalized, traded via the legacy 'relative' (63d score-change) selection.
+It is a prior-track signal (the factor pair is fixed ex-ante by the
+pre-registered tournament), so it requires ``--track prior``.
 
 ``--construction cap_tilt`` switches the portfolio construction from the
 default equal-weight top-N sleeve to the benchmark-aware Cap_Tilt book
@@ -128,6 +135,18 @@ _PRIOR_FACTORS_VM = (
 )
 
 _PRIOR_SETS = {"full": _PRIOR_FACTORS, "vm": _PRIOR_FACTORS_VM}
+
+#: Factor ingredients of the S5_amp_ey_change tournament winner
+#: (``--signal amp_ey``): equal-weight direction-applied relative ranks of
+#: 12-1 country momentum and TTM earnings yield (AMP 2013 E/P combo),
+#: traded via the 'relative' (63d score-change) selection rule.
+_S5_FACTORS = ("Momentum_12_1", "EarningsYieldTTM")
+
+_S5_NOTE = (
+    "Signal = S5_amp_ey_change, winner of the pre-registered 6-spec "
+    "tournament (screen-window BH q=0.019 World / 0.093 DM); tournament "
+    "adds 6 trials/segment to cross-run multiple-testing accounting."
+)
 
 
 def _log(msg: str) -> None:
@@ -412,6 +431,57 @@ def build_composite(factor_scores: dict, kept: tuple) -> tuple:
     return normalized, rebased, category_weights
 
 
+def build_amp_ey_composite(processed: dict, universe: list) -> tuple:
+    """Stage 5 (``--signal amp_ey``): S5 tournament-winner composite.
+
+    composite = 0.5 * relative_rank(Momentum_12_1)
+              + 0.5 * relative_rank(EarningsYieldTTM)
+
+    Direction-applied cross-sectional ranks (``transform_factor``) on the
+    common columns (NaN where either ingredient is NaN), then normalized to
+    [0, 1] per date — exactly the 'amp_ey' construction evaluated in
+    ``scripts/spec_tournament.py``.  Returns the same
+    ``(normalized, rebased contributions, category weights)`` triple as
+    :func:`build_composite` so every downstream stage is unchanged.
+    """
+    from country_rotation.factors.catalog import get_spec
+    from country_rotation.factors.transforms import transform_factor
+    from country_rotation.signals.composite import (
+        normalize_cross_section,
+        rebase_contributions,
+    )
+
+    ranks: dict = {}
+    for name in _S5_FACTORS:
+        if name not in processed:
+            raise SystemExit(
+                f"[research_run] ERROR: --signal amp_ey requires the "
+                f"'{name}' metric in the processed inputs."
+            )
+        df = processed[name]
+        cols = [c for c in universe if c in df.columns]
+        if len(cols) < 3:
+            raise SystemExit(
+                f"[research_run] ERROR: --signal amp_ey factor '{name}' "
+                f"covers only {len(cols)} universe columns (< 3)."
+            )
+        ranks[name] = transform_factor(df[cols], get_spec(name).direction)[
+            "relative_rank"
+        ]
+
+    mom, ey = (ranks[name] for name in _S5_FACTORS)
+    common = mom.columns.intersection(ey.columns)
+    contributions = {
+        "Momentum": 0.5 * mom[common],
+        "Valuation": 0.5 * ey[common],
+    }
+    composite = contributions["Momentum"] + contributions["Valuation"]
+    normalized = normalize_cross_section(composite)
+    rebased = rebase_contributions(contributions, composite, normalized)
+    category_weights = {"Momentum": 0.5, "Valuation": 0.5}
+    return normalized, rebased, category_weights
+
+
 # ---------------------------------------------------------------------------
 # Verdict serialization
 # ---------------------------------------------------------------------------
@@ -503,6 +573,7 @@ def build_verdict_payload(
     payload = {
             "segment": args.segment,
             "track": args.track,
+            "signal": getattr(args, "signal", "blend"),
             "basis": args.basis,
             "bmk_source": getattr(args, "bmk_source", "eqw"),
             "mode": getattr(args, "mode", "active"),
@@ -535,7 +606,8 @@ def print_verdict_summary(payload: dict) -> None:
         return fmt.format(x) if x is not None else "nan"
 
     _log("=" * 64)
-    _log(f"VERDICT [{payload['segment']} | track={payload['track']}] overall: "
+    _log(f"VERDICT [{payload['segment']} | track={payload['track']} | "
+         f"signal={payload.get('signal', 'blend')}] overall: "
          f"{'PASS' if v['overall'] else 'FAIL'}")
     for name, passed in v["checks"].items():
         _log(f"  check {name:28s}: {'PASS' if passed else 'FAIL'}")
@@ -609,6 +681,14 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
              "(50/50 Value+Momentum, AMP 2013 — secondary pre-registered variant).",
     )
     parser.add_argument(
+        "--signal", choices=("blend", "amp_ey"), default="blend",
+        help="Composite signal: 'blend' (default) = 4-metric blend over the "
+             "--prior-set factors (current behaviour); 'amp_ey' = S5 "
+             "tournament winner — 0.5*rank(Momentum_12_1) + "
+             "0.5*rank(EarningsYieldTTM), traded via the 'relative' (63d "
+             "score-change) selection. Requires --track prior.",
+    )
+    parser.add_argument(
         "--basis", choices=("active", "absolute"), default="active",
         help="Certification basis. 'active' (default) computes Sharpe-t / PSR "
              "/ DSR / bootstrap / MC on excess-over-benchmark returns (measures "
@@ -641,6 +721,14 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
              "mandate book; requires --bmk-source index and --mode active).",
     )
     args = parser.parse_args()
+
+    if args.signal == "amp_ey" and args.track != "prior":
+        raise SystemExit(
+            "[research_run] ERROR: --signal amp_ey is a prior-track signal "
+            "— its factor pair is fixed ex-ante by the pre-registered spec "
+            "tournament (scripts/spec_tournament.py), so no screening may "
+            f"select it. Use --track prior (got track='{args.track}')."
+        )
 
     if args.construction == "cap_tilt" and (
         args.bmk_source != "index" or args.mode != "active"
@@ -755,9 +843,15 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
     # 4. Factor set: walk-forward screening OR fixed literature priors
     # ------------------------------------------------------------------
     tag = f"{args.segment}_{args.track}"
-    if args.track == "prior" and args.prior_set != "full":
+    if (
+        args.track == "prior"
+        and args.signal == "blend"
+        and args.prior_set != "full"
+    ):
         tag += f"_{args.prior_set}"
     tag += f"_p{args.periodicity}_{args.basis}"
+    if args.signal == "amp_ey":
+        tag += "_S5"
     if args.construction == "cap_tilt":
         tag += "_captilt"
     if args.bmk_source == "index":
@@ -801,26 +895,40 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
             _log(f"Done in {payload['runtime_seconds']}s.")
             return
     else:
-        _log("Track=prior: screening SKIPPED — literature-prior factor set "
-             "(docs/research/country_rotation_literature.md).")
-        factor_set = select_prior_factors(factor_scores, args.prior_set)
-        if not factor_set:
-            raise SystemExit(
-                "[research_run] ERROR: none of the literature-prior factors "
-                "are present in factor_scores."
-            )
-        priors = _PRIOR_SETS[args.prior_set]
-        missing = [f for f in priors if f not in factor_set]
-        if missing:
-            _log(f"WARNING: prior factors missing from data: {missing}")
-        _log(f"Prior factor set '{args.prior_set}' "
-             f"({len(factor_set)}/{len(priors)}): {factor_set}")
-        if args.prior_set == "vm":
-            extra_notes.append(
-                "SECONDARY pre-registered variant: 50/50 Value+Momentum "
-                "(AMP 2013 primary construction). Counts as additional "
-                "trials in cross-run DSR accounting."
-            )
+        if args.signal == "amp_ey":
+            _log("Track=prior, signal=amp_ey: screening SKIPPED — "
+                 "S5_amp_ey_change tournament-winner factor pair "
+                 "(scripts/spec_tournament.py).")
+            factor_set = list(_S5_FACTORS)
+            missing = [f for f in factor_set if f not in factor_scores]
+            if missing:
+                raise SystemExit(
+                    f"[research_run] ERROR: --signal amp_ey factors missing "
+                    f"from factor_scores: {missing}."
+                )
+            _log(f"S5 factor set ({len(factor_set)}): {factor_set}")
+            extra_notes.append(_S5_NOTE)
+        else:
+            _log("Track=prior: screening SKIPPED — literature-prior factor "
+                 "set (docs/research/country_rotation_literature.md).")
+            factor_set = select_prior_factors(factor_scores, args.prior_set)
+            if not factor_set:
+                raise SystemExit(
+                    "[research_run] ERROR: none of the literature-prior "
+                    "factors are present in factor_scores."
+                )
+            priors = _PRIOR_SETS[args.prior_set]
+            missing = [f for f in priors if f not in factor_set]
+            if missing:
+                _log(f"WARNING: prior factors missing from data: {missing}")
+            _log(f"Prior factor set '{args.prior_set}' "
+                 f"({len(factor_set)}/{len(priors)}): {factor_set}")
+            if args.prior_set == "vm":
+                extra_notes.append(
+                    "SECONDARY pre-registered variant: 50/50 Value+Momentum "
+                    "(AMP 2013 primary construction). Counts as additional "
+                    "trials in cross-run DSR accounting."
+                )
         _log("Computing informational full-window IC evidence "
              "(not used for selection; lockbox_frac=0.0) ...")
         prior_evidence = prior_factor_evidence(
@@ -839,9 +947,16 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
     # 5. Composite from the selected factor set
     # ------------------------------------------------------------------
     _log("Building composite from selected factors ...")
-    normalized, contributions, category_weights = build_composite(
-        factor_scores, tuple(factor_set)
-    )
+    if args.signal == "amp_ey":
+        normalized, contributions, category_weights = build_amp_ey_composite(
+            processed, universe
+        )
+        _log("Composite: S5 amp_ey — 0.5*rank(Momentum_12_1) + "
+             "0.5*rank(EarningsYieldTTM), cross-sectionally normalized.")
+    else:
+        normalized, contributions, category_weights = build_composite(
+            factor_scores, tuple(factor_set)
+        )
 
     # ------------------------------------------------------------------
     # 6. Validation

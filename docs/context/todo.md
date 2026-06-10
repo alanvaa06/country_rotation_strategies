@@ -37,5 +37,5 @@
   - [done] Per-segment Cap_Tilt runs (DM/World/EM vs cap index) via research_run.py --construction cap_tilt; verdict JSONs in outputs/research/
 - [done] Multi-strategy toggle dashboard — reporting/dashboard.py (build_strategy_pane + render_dashboard, segment tabs World/DM/EM + strategy toggle, default Cap_Tilt) + scripts/build_dashboard.py (9 panes, one self-contained HTML); 6 TDD tests
 - [done] Engine 'top_n_level' selection (canonical AMP-2013 rank-of-level, all weighting branches incl. Cap_Tilt) + pre-registered 6-spec signal tournament (scripts/spec_tournament.py: screen-window IC + BH-FDR + one-shot lockbox); winners World/DM = S5_amp_ey_change (q .019/.093), EM = S1 (not significant); 145 tests green
-- [pending] Winner scorecard runs + verdict (S5_amp_ey_change full validation per segment) — task #34
+- [done] Winner scorecard runs + verdict — research_run.py `--signal amp_ey` (S5 tournament winner, requires --track prior, tag `_S5`); 4 full runs World/DM x cap_tilt/eqw-active @63d vs cap index: ALL FAIL (0/3 checks) — S5 improves composite IC rel (World +0.0705 t 2.56; DM +0.0576 t 1.63) but realized IR is negative everywhere (World cap_tilt -0.26, DM cap_tilt -0.24); old vm blend remains the better traded book; no certification
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)
