@@ -493,6 +493,7 @@ def build_verdict_payload(
         {
             "segment": args.segment,
             "track": args.track,
+            "basis": args.basis,
             "quick": bool(args.quick),
             "periodicity": args.periodicity,
             "n_countries": len(universe),
@@ -589,6 +590,13 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         help="track=prior factor set: 'full' (4-category) or 'vm' "
              "(50/50 Value+Momentum, AMP 2013 — secondary pre-registered variant).",
     )
+    parser.add_argument(
+        "--basis", choices=("active", "absolute"), default="active",
+        help="Certification basis. 'active' (default) computes Sharpe-t / PSR "
+             "/ DSR / bootstrap / MC on excess-over-benchmark returns (measures "
+             "selection skill, beta-neutral); 'absolute' uses the long-only "
+             "book's total return (beta-laden — diagnostic only).",
+    )
     args = parser.parse_args()
 
     t0 = time.time()
@@ -653,7 +661,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
     tag = f"{args.segment}_{args.track}"
     if args.track == "prior" and args.prior_set != "full":
         tag += f"_{args.prior_set}"
-    tag += f"_p{args.periodicity}"
+    tag += f"_p{args.periodicity}_{args.basis}"
     verdict_path = os.path.join(args.output_dir, f"verdict_{tag}.json")
     screen_result = None
     prior_evidence = None
@@ -752,6 +760,7 @@ def main() -> None:  # noqa: C901 — sequential research pipeline
         n_mc=n_mc,
         n_folds=n_folds,
         seed=42,
+        basis=args.basis,
     )
 
     # ------------------------------------------------------------------

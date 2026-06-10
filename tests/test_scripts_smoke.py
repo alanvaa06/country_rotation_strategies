@@ -187,10 +187,10 @@ def test_research_run_smoke(tmp_path):
 
     assert out.returncode == 0, f"stdout:\n{out.stdout}\nstderr:\n{out.stderr}"
 
-    # Screening evidence + verdict are always written (track+periodicity-suffixed)
-    assert (out_dir / "screening_World_screen_p21.xlsx").exists()
+    # Screening evidence + verdict are always written (track+periodicity+basis suffix)
+    assert (out_dir / "screening_World_screen_p21_active.xlsx").exists()
     verdict = json.loads(
-        (out_dir / "verdict_World_screen_p21.json").read_text(encoding="utf-8")
+        (out_dir / "verdict_World_screen_p21_active.json").read_text(encoding="utf-8")
     )
     assert verdict["segment"] == "World"
     assert verdict["track"] == "screen"
@@ -203,7 +203,7 @@ def test_research_run_smoke(tmp_path):
     assert verdict["factor_set"] == kept
     assert verdict["stats"] is not None
     assert verdict["stats"]["sharpe_ann"] is not None
-    assert (out_dir / "report_World_screen_p21.html").exists()
+    assert (out_dir / "report_World_screen_p21_active.html").exists()
 
 
 def test_build_scores_smoke(tmp_path):

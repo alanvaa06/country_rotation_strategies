@@ -54,7 +54,24 @@
 
 Re-ran the exact quarterly command on the unchanged dataset. The verdict reproduced the prior run **bit-for-bit**: max abs diff = 0.0 across sharpe_ann, t-stat, PSR, DSR, MC p, WFE, NW t, stability z-score and both bootstrap CI bounds (seed = 42 fixed throughout). This confirms the "re-certifies automatically as data accrues" mechanism: identical inputs → identical verdict, so any future change in a quarterly verdict is attributable solely to new data, not run-to-run noise.
 
+## Addendum 2026-06-09 (b) — ACTIVE-basis certification (alpha, not beta)
+
+The original verdicts above computed Sharpe-t / PSR / DSR / bootstrap on the **absolute** return of a long-only, fully-invested top-5 book. In a 2010–2025 bull market that is dominated by market beta, not selection skill. The scorecard now supports `basis="active"` (default in `research_run.py`): the headline stats are computed on **excess-over-benchmark** daily returns (strategy − equal-weight universe), i.e. the Information Ratio. The Monte-Carlo random-selection null and the Newey-West-vs-equal-weight test were already beta-controlled and are essentially unchanged — confirming they measured skill all along.
+
+### DM — absolute vs active
+
+| Run | t (abs→act) | PSR | DSR | MC p | Bootstrap Sharpe CI (abs → act) |
+|---|---|---|---|---|---|
+| vm @63 (lead) | 1.96 → **1.34** | 0.97 → 0.91 | 0.91 → 0.84 | 0.059 → **0.050** | [0.10, 0.43] → **[-0.005, 0.046]** |
+| vm @21 | 1.53 → 0.61 | 0.93 → 0.73 | 0.67 → 0.52 | 0.257 → 0.307 | [0.01, 0.20] → [-0.012, 0.032] |
+| full @63 | 1.84 → 0.95 | 0.96 → 0.83 | 0.90 → 0.76 | 0.119 → 0.158 | [0.06, 0.41] → [-0.011, 0.040] |
+
+**Corrected verdict (the honest one).** On the active basis the lead candidate (DM 50/50 V+M @63d) has an Information Ratio point estimate of ~0.5 (active Sharpe t = 1.34), but its **bootstrap IR confidence interval straddles zero [-0.005, 0.046]** — the alpha is *not* statistically distinguishable from zero on 2010–2025 DM. The earlier absolute Sharpe (t 1.96, CI [0.10, 0.43]) was ~85% market beta. The MC null at p = 0.050 says selection skill only marginally beats random country picking. **DM 50/50 V+M remains the best candidate and is still not certified — and the bar it must clear is alpha-significance, which is further away than the absolute numbers implied (active t 1.34 needs ~2× the absolute t's data to reach 2).**
+
+This does not change the strategic conclusion (extend history / accrue live quarters; quarterly is the right cadence) — it corrects the *framing*: certify on alpha, not on a beta-laden absolute Sharpe.
+
 ## Reproducibility
-- `python scripts/research_run.py --segment {World|DM|EM} --track {screen|prior} [--prior-set vm] --periodicity {21|63}`
-- Output artifacts now carry the periodicity suffix to prevent cadence collisions: `verdict_{seg}_{track}[_{prior_set}]_p{periodicity}.json` (+ `report_*.html`, `screening_*.xlsx`). All gitignored, local.
-- Code state: branch `dev`; full pytest suite green.
+- `python scripts/research_run.py --segment {World|DM|EM} --track {screen|prior} [--prior-set vm] --periodicity {21|63} [--basis active|absolute]`
+- `--basis active` is the default (alpha certification). `--basis absolute` is diagnostic only (beta-laden).
+- Artifacts carry periodicity + basis suffix to prevent collisions: `verdict_{seg}_{track}[_{prior_set}]_p{periodicity}_{basis}.json` (+ `report_*.html`, `screening_*.xlsx`). All gitignored, local.
+- Code state: branch `dev`; full pytest suite green (125).
