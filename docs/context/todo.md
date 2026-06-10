@@ -1,38 +1,34 @@
 # TODO — Country Rotation Strategy Program
 
 ## Phase 0 — Housekeeping
-- [in_progress] Checkpoint commits (legacy deletions / code changes / docs) on `dev`
-- [pending] Create public GitHub repo `country_rotation_strategies`, push `dev` + `main`
-- [done] Bootstrap context docs (todo, memory, sesion-log)
+- [done] Checkpoint commits on `dev`; public repo github.com/alanvaa06/country_rotation_strategies; dev+main pushed
+- [done] Bootstrap context docs (todo, memory, lessons, results, sesion-log, PRD)
 
 ## Phase 1 — Literature Research
-- [pending] /deep-research: country rotation strategies (academic + practitioner evidence)
-- [pending] Document findings in `docs/research/country_rotation_literature.md`
+- [done] Deep-research: 23 sources, 25 claims adversarially verified → docs/research/country_rotation_literature.md
 
 ## Phase 2 — Thesis Validation + Refactor
-- [pending] Brainstorm + spec: package architecture (ingestion / processing / exploration)
-- [pending] Look-ahead & data-integrity audit of current pipeline
-- [done] Refactor to `country_rotation/` package preserving current features — Plan A complete (T1-T13: config, ingestion, processing, integrity, transforms, catalog, composite, metrics, ic, engine, parity, redundancy/benchmarks, CLI scripts)
-- [done] Engine unit tests (pytest): 90/90 green including end-to-end CLI script smoke tests
-- [done] Final-review fixes: CLI wiring, strict metric weights, cleanup queue, script smoke tests
+- [done] Design spec (docs/superpowers/specs/2026-06-09) + Plan A executed (T1-T13): package, leak fixes, catalog, engine parity-locked, CLI scripts, 90+ tests
+- [done] Look-ahead audit: bfill leak fixed (ffill-only), perturbation guards, publication-lag config
 
 ## Phase 3 — Feature Selection
-- [pending] Propose feature selection process (IC-based, redundancy-aware, OOS-honest)
-- [pending] Self-verify: walk-forward IC stability, multiple-testing adjustment
+- [done] OOS-honest screening: per-period IC t-stats, BH-FDR q=0.10, HLZ weak labels, lockbox, min_mean_ic gate (Plan B B3 + power fix)
 
 ## Phase 4 — Signal Engineering
-- [pending] Compose final signal from building blocks (Valuation/Quality/Profitability/Momentum)
-- [pending] Signal decomposition + attribution to blocks
+- [done] Composite from building blocks with rebased contributions; literature-prior tracks (full 4-category + 50/50 V+M)
 
 ## Phase 5 — Backtest Engine Enhancement
-- [pending] Benchmark management (cap-weight / equal-weight nulls)
-- [pending] Relative (active) strategy support: TE, IR, active weights
-- [pending] Validation harness: DSR, PSR, walk-forward, MC null
+- [done] Active mode, equal-weight null, validation harness (DSR/PSR/WF/MC/bootstrap/NW) — Plan B B1/B2/B4
 
 ## Phase 6 — Visualization Report
-- [done] Performance abs/rel, risk abs/rel, IC analysis, score building-block decomposition
+- [done] HTML report: performance abs/rel, risk abs/rel, IC, building-block decomposition, scorecard (Plan C)
 
 ## Phase 7 — Strategy Selection
-- [in_progress] Explore dataset, select profitable strategy per EM / DM / World — research driver (scripts/research_run.py) done; World @63d screen kept 0/45 (FDR-binding); DM/EM runs + screening-policy decision pending
-- [pending] Evidence-based verdict with statistical certification
-- [pending] DECISION NEEDED: BH-FDR family definition (45-factor family kills everything at q=0.10; per-category families / fdr_q / horizon are the levers)
+- [done] 8 pre-registered runs World/DM/EM × screen/prior(/vm) → docs/research/segment_verdicts_2026-06-09.md
+- [done] Verdict: NO certification at pre-registered gates; DM 50/50 V+M nearest (t 1.96, MC p 0.059, DSR 0.91); EM clear negative; honest-negative documented
+
+## Next (future sessions)
+- [pending] Extend price/fundamental history pre-2010 (highest-value: doubles statistical power)
+- [pending] Pre-registered robustness: DM prior-vm @21d monthly
+- [pending] Quarterly re-run protocol: `research_run.py --segment DM --track prior --prior-set vm` as data accrues
+- [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)
