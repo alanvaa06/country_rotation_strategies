@@ -102,8 +102,35 @@ Strategy total return = **market beta** + **construction tilt** + **selection al
 ### Next lever (pre-register before running)
 Benchmark-aware construction: build the book as cap-index weights ± active tilts from the composite score (e.g. cap-weight base, overweight top-5 / underweight bottom by a TE budget), instead of an equal-weight top-5 sleeve. This removes the structural anti-cap tilt so the realized IR reflects the (already MC-significant) selection skill. Blend mode is the right wrapper afterwards: TE scales exactly (1−w) for mandate sizing.
 
+## Addendum 2026-06-09 (d) — Benchmark-aware (Cap_Tilt) construction + strategy dashboard
+
+The pre-registered lever implemented: `--construction cap_tilt` builds the book as **cap-weight base (from Market_Cap, row-normalized) ± active_share/N score tilts** (top-5 overweight, bottom-5 underweight clipped long-only, Σw=1 exact). 7 new engine tests; parity untouched; 138 suite green.
+
+### All-strategy comparison vs cap mandate benchmark (vm @63d, active basis, full params)
+
+| Segment | Strategy | IR | act t | MC p | DSR | TE | beta | Boot IR CI |
+|---|---|---|---|---|---|---|---|---|
+| World | **Cap-Tilt (winner)** | −0.10 | −0.39 | **0.030** | 0.21 | 3.2% | 0.93 | [−0.029, 0.015] |
+| World | EqW active | −0.04 | −0.16 | 0.050 | 0.24 | 10.9% | 0.89 | [−0.026, 0.021] |
+| World | Blend 50 | −0.05 | −0.19 | 0.050 | 0.24 | 5.4% | 0.95 | [−0.027, 0.020] |
+| DM | **Cap-Tilt (winner)** | −0.04 | −0.16 | **0.050** | 0.37 | 2.6% | 0.94 | [−0.022, 0.017] |
+| DM | EqW active | −0.14 | −0.57 | 0.040 | 0.18 | 10.0% | 0.86 | [−0.029, 0.015] |
+| DM | Blend 50 | −0.15* | −0.60 | 0.040 | 0.17 | 5.0% | 0.93 | [−0.030, 0.015] |
+| EM | **Cap-Tilt (winner)** | **+0.29** | +1.18 | **0.030** | 0.76 | 4.3% | 1.01 | [−0.008, 0.043] |
+| EM | EqW active | +0.31 | +1.23 | 0.079 | 0.74 | 10.1% | 0.86 | [−0.009, 0.044] |
+| EM | Blend 50 | +0.30* | +1.20 | 0.079 | 0.73 | 5.1% | 0.93 | [−0.009, 0.043] |
+
+Key findings:
+1. **Cap_Tilt is the per-segment winner on mandate quality**: tightest TE (2.6–4.3%), beta ≈ 0.93–1.01, and the strongest/equal-strongest MC significance in every segment (World 0.030, DM 0.050, EM 0.030).
+2. **EM flips POSITIVE vs the cap mandate** (IR +0.29, MC p 0.030): EM cap concentration (China) lagged its own equal-weight basket post-2010 — the mirror image of DM, where US cap concentration dominated. EM, "clear negative" vs the eqw null, is the best mandate-relative candidate.
+3. DM/World Cap_Tilt IR ≈ flat (−0.04/−0.10): tilting from a cap base removes most of the eqw construction drag (DM −0.14 → −0.04) but a residual gap remains because the Market_Cap-derived base ≠ vendor free-float index exactly.
+4. Selection skill stays significant everywhere construction is held constant (MC null) — the signal survives all three constructions.
+
+### Strategy dashboard
+`outputs/research/strategy_dashboard.html` (gitignored, 7.8MB, 72 figures) — segment tabs (World/DM/EM) × strategy toggle (**default: Benchmark-Aware Cap-Tilt**, alternatives: Active Equal-Weight, Core-Satellite 50/50). Per pane: verdict banner, 11 stat cards, 8 figures (cumulative vs cap-bmk vs eqw-null, drawdowns, rolling-12m, weights, IC×2, contribution decomposition×2), 5 tables (per-year, risk, IC stats, weights, scorecard). Rebuild: `python scripts/build_dashboard.py`.
+
 ## Reproducibility
-- `python scripts/research_run.py --segment {World|DM|EM} --track {screen|prior} [--prior-set vm] --periodicity {21|63} [--basis active|absolute] [--bmk-source eqw|index] [--mode active|blend --bmk-weight w]`
+- `python scripts/research_run.py --segment {World|DM|EM} --track {screen|prior} [--prior-set vm] --periodicity {21|63} [--basis active|absolute] [--bmk-source eqw|index] [--construction eqw|cap_tilt] [--mode active|blend --bmk-weight w]`
 - `--basis active` is the default (alpha certification). `--basis absolute` is diagnostic only (beta-laden).
 - Artifacts carry periodicity + basis suffix to prevent collisions: `verdict_{seg}_{track}[_{prior_set}]_p{periodicity}_{basis}.json` (+ `report_*.html`, `screening_*.xlsx`). All gitignored, local.
 - Code state: branch `dev`; full pytest suite green (125).
