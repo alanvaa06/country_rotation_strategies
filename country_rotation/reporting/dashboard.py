@@ -597,29 +597,11 @@ h1 { font-size:1.25rem; margin-bottom:8px; padding-bottom:6px; }
 .sec-toggle:focus-visible { outline:2px solid #2563EB; outline-offset:1px; }
 .sec-arrow { display:inline-block; width:1em; }
 .sec-body { padding:2px 4px 8px 4px; }
-/* --- Identifier bar + reference-universe panel --- */
-.id-bar { display:flex; align-items:center; gap:6px; margin:0 0 8px 0; }
-.id-label { font-size:0.78rem; color:#6b7280; }
-.id-btn { font-size:0.78rem; padding:4px 12px; cursor:pointer;
-          border:1px solid #d1d5db; border-radius:999px;
-          background:#f3f4f6; color:#374151; }
-.id-btn.active { background:#1e3a5f; color:#fff; border-color:#1e3a5f; }
-.idx-panel { background:#fff; border:1px solid #e5e7eb; border-radius:6px;
-             padding:8px 12px; margin:0 0 8px 0; max-height:30vh;
-             overflow-y:auto; }
-.idx-head { font-size:0.75rem; color:#6b7280; margin-bottom:6px; }
-.idx-meta { font-size:0.75rem; font-weight:600; color:#374151; margin:4px 0; }
-.idx-grid { display:grid; gap:2px 6px;
-            grid-template-columns:repeat(auto-fill,minmax(64px,1fr)); }
-.tk { font-size:0.68rem; font-family:Consolas,Menlo,monospace; color:#1f2937;
-      background:#f3f4f6; border-radius:3px; padding:1px 4px;
-      text-align:center; }
 """
 
 _DASH_JS = """
 var currentSeg = "%(default_seg)s";
 var currentStrat = "%(default_strat)s";
-var currentIdx = "";
 
 function _setActive(selector, attr, value) {
   var btns = document.querySelectorAll(selector);
@@ -665,85 +647,7 @@ function toggleSec(btn) {
   if (arrow) { arrow.textContent = open ? "\\u25B8" : "\\u25BE"; }
 }
 
-function toggleIdx(key) {
-  // Identifier buttons: show one reference universe at a time; re-click hides.
-  var panel = document.getElementById("idx-panel");
-  if (!panel) { return; }
-  var lists = document.querySelectorAll(".idx-list");
-  for (var i = 0; i < lists.length; i++) { lists[i].style.display = "none"; }
-  if (currentIdx === key) {
-    currentIdx = "";
-    panel.style.display = "none";
-  } else {
-    currentIdx = key;
-    panel.style.display = "block";
-    var el = document.getElementById("idx-" + key);
-    if (el) { el.style.display = "block"; }
-  }
-  _setActive(".id-btn", "data-idx", currentIdx);
-}
 """
-
-
-_IDX_KEYS = {"S&P 500": "sp500", "Nasdaq-100": "ndx", "Russell 1000": "r1000"}
-
-
-def _identifiers_bar() -> str:
-    """Identifier buttons + hidden reference-universe panel (display only).
-
-    Constituent snapshots come from
-    :mod:`country_rotation.reporting.index_constituents` (Wikipedia, see
-    module docstring). The platform trades countries, not stocks — these
-    ticker lists are reference context only. An index whose fetch failed at
-    snapshot time is labelled \"unavailable\" instead of fabricated.
-    """
-    from country_rotation.reporting.index_constituents import (
-        AS_OF,
-        CONSTITUENTS,
-    )
-
-    btns: list[str] = []
-    lists: list[str] = []
-    for name, key in _IDX_KEYS.items():
-        label = name.replace("&", "&amp;")
-        tickers = CONSTITUENTS.get(name) or []
-        btn_label = label if tickers else f"{label} (unavailable)"
-        btns.append(
-            f'<button class="id-btn" type="button" data-idx="{key}" '
-            f'onclick="toggleIdx(\'{key}\')">{btn_label}</button>'
-        )
-        if tickers:
-            body = (
-                f'<div class="idx-meta">{label} — {len(tickers)} tickers</div>'
-                '<div class="idx-grid">'
-                + "".join(f'<span class="tk">{t}</span>' for t in tickers)
-                + "</div>"
-            )
-        else:
-            body = (
-                f'<div class="idx-meta">{label}</div>'
-                "<p><em>Constituent list unavailable at snapshot time.</em></p>"
-            )
-        lists.append(
-            f'<div id="idx-{key}" class="idx-list" style="display:none">'
-            f"{body}</div>"
-        )
-
-    head = (
-        '<div class="idx-head">Reference universes (display only) — '
-        f"constituents as of {AS_OF} (source: Wikipedia; lists drift with "
-        "index rebalances). This platform trades countries, not single "
-        "stocks.</div>"
-    )
-    return (
-        '<div class="id-bar"><span class="id-label">Identifiers:</span>'
-        + "".join(btns)
-        + "</div>"
-        + f'<div id="idx-panel" class="idx-panel" style="display:none">'
-        + head
-        + "".join(lists)
-        + "</div>"
-    )
 
 
 def render_dashboard(
@@ -812,7 +716,6 @@ def render_dashboard(
         f"<h1>{title}</h1>"
         f'<div class="seg-tabs">{seg_tabs}</div>'
         f'<div class="strat-toggle">{strat_btns}</div>'
-        f"{_identifiers_bar()}"
         "</header>"
         '<main class="dash-content">'
         + "\n".join(panes)

@@ -16,9 +16,8 @@ Tests
 6. test_evidence_grade_tiers          — pure tier rules (4 tiers + edge cases).
 7. test_verdict_banner_*              — grade line + per-gate chips markup.
 8. test_pane_sections_collapsible     — sec-toggle buttons, default collapsed.
-9. test_index_constituents_module     — snapshot module sanity (counts, AS_OF).
-10. test_render_dashboard_identifiers — reference-universe panel markup.
-11. test_render_dashboard_viewport    — 100vh / overflow:hidden shell.
+9. test_render_dashboard_has_no_identifiers_bar — feature removed by request.
+10. test_render_dashboard_viewport    — 100vh / overflow:hidden shell.
 """
 from __future__ import annotations
 
@@ -452,53 +451,19 @@ def test_pane_sections_collapsible():
     assert html6.count('<button class="sec-toggle"') == 6
 
 
-# ---------------------------------------------------------------------------
-# Index constituents (identifiers) module + panel
-# ---------------------------------------------------------------------------
-
-def test_index_constituents_module():
-    import re
-
-    from country_rotation.reporting.index_constituents import (
-        AS_OF,
-        CONSTITUENTS,
-        SOURCE_URLS,
-    )
-
-    assert set(CONSTITUENTS) == {"S&P 500", "Nasdaq-100", "Russell 1000"}
-    assert len(CONSTITUENTS["S&P 500"]) >= 480
-    assert len(CONSTITUENTS["Nasdaq-100"]) >= 90
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", AS_OF)
-    assert set(SOURCE_URLS) == set(CONSTITUENTS)
-    assert all(
-        u.startswith("https://en.wikipedia.org/") for u in SOURCE_URLS.values()
-    )
-    # Tickers are compact uppercase identifiers, deduped
-    for name, tickers in CONSTITUENTS.items():
-        assert len(tickers) == len(set(tickers)), f"{name} has duplicates"
-        assert all(
-            re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,5}", t) for t in tickers
-        ), f"{name} has malformed tickers"
-
-
 def _tiny_segments() -> dict:
     return {"World": {"cap_tilt": ("Cap-Tilt", "<p>pane</p>")}}
 
 
-def test_render_dashboard_identifiers_panel():
+def test_render_dashboard_has_no_identifiers_bar():
+    """Identifiers/reference-universe feature was removed by request."""
     from country_rotation.reporting.dashboard import render_dashboard
 
     html = render_dashboard("T", _tiny_segments())
 
-    assert "Reference universes (display only)" in html
-    for label in ("S&amp;P 500", "Nasdaq-100", "Russell 1000"):
-        assert label in html, f"identifier button '{label}' missing"
-    assert "toggleIdx" in html
-    assert 'id="idx-panel"' in html
-    assert "AAPL" in html            # constituent chips embedded
-    # As-of caveat propagated from the snapshot module
-    from country_rotation.reporting.index_constituents import AS_OF
-    assert AS_OF in html
+    assert "Identifiers:" not in html
+    assert "toggleIdx" not in html
+    assert "idx-panel" not in html
 
 
 # ---------------------------------------------------------------------------
