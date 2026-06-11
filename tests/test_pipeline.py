@@ -254,3 +254,44 @@ def test_calendar_prints_schedule(monkeypatch, tmp_path, capsys):
 def test_calendar_no_run_dir(tmp_path):
     with pytest.raises(SystemExit, match="no production run"):
         pipeline.print_calendar([_EM_ENTRY], periods=2, repo_root=str(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# dashboard stages + update alias
+# ---------------------------------------------------------------------------
+
+def test_main_update_is_quarterly_alias(monkeypatch, tmp_path):
+    recorder = _Recorder()
+    monkeypatch.setattr(
+        pipeline, "dashboard_commands",
+        lambda repo_root=None: [[sys.executable, "build_production_dashboard.py"]],
+    )
+    _run_main(monkeypatch, tmp_path, ["update", "--quick"], recorder)
+    scripts = [Path(c[1]).name for c in recorder.calls]
+    assert scripts == [
+        "research_run.py", "research_run.py",
+        "production_run.py", "build_production_dashboard.py",
+    ]
+
+
+def test_main_dashboard_production_only(monkeypatch, tmp_path):
+    recorder = _Recorder()
+    _run_main(monkeypatch, tmp_path, ["dashboard-production"], recorder)
+    assert [Path(c[1]).name for c in recorder.calls] == [
+        "build_production_dashboard.py"
+    ]
+
+
+def test_main_dashboard_research_only(monkeypatch, tmp_path):
+    recorder = _Recorder()
+    monkeypatch.setattr(pipeline, "has_verdicts", lambda repo_root=None: True)
+    _run_main(monkeypatch, tmp_path, ["dashboard-research"], recorder)
+    assert [Path(c[1]).name for c in recorder.calls] == ["build_dashboard.py"]
+
+
+def test_main_dashboard_research_requires_verdicts(monkeypatch, tmp_path):
+    recorder = _Recorder()
+    monkeypatch.setattr(pipeline, "has_verdicts", lambda repo_root=None: False)
+    with pytest.raises(SystemExit, match="recert"):
+        _run_main(monkeypatch, tmp_path, ["dashboard-research"], recorder)
+    assert recorder.calls == []
