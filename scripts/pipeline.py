@@ -19,9 +19,14 @@ quarterly   recert -> production -> dashboards (the full quarterly cycle).
 Usage
 -----
     python scripts/pipeline.py quarterly [--quick] [--dry-run]
+    python scripts/pipeline.py update                  # alias for quarterly:
+                                                       # full re-run of every
+                                                       # deployed strategy
     python scripts/pipeline.py production [--quick] [--dry-run]
     python scripts/pipeline.py recert [--quick] [--no-costs] [--dry-run]
-    python scripts/pipeline.py dashboards [--dry-run]
+    python scripts/pipeline.py dashboards [--dry-run]  # both dashboards
+    python scripts/pipeline.py dashboard-production    # production dashboard only
+    python scripts/pipeline.py dashboard-research      # research strategy dashboard only
     python scripts/pipeline.py calendar [--periods 8]
 
 ``--strategy ID`` restricts recert/production/quarterly to ONE deployed
@@ -159,23 +164,30 @@ def production_command(quick: bool, strategy: str | None = None) -> list[str]:
     return cmd
 
 
-def dashboard_commands(repo_root: str | None = None) -> list[list[str]]:
-    """Production dashboard always; research dashboard only when verdicts
-    exist (it hard-exits otherwise)."""
+def production_dashboard_command() -> list[str]:
+    return [sys.executable,
+            os.path.join(_SCRIPTS_DIR, "build_production_dashboard.py")]
+
+
+def research_dashboard_command() -> list[str]:
+    return [sys.executable, os.path.join(_SCRIPTS_DIR, "build_dashboard.py")]
+
+
+def has_verdicts(repo_root: str | None = None) -> bool:
     root = repo_root if repo_root is not None else _REPO_ROOT
-    cmds = [
-        [sys.executable,
-         os.path.join(_SCRIPTS_DIR, "build_production_dashboard.py")],
-    ]
     verdict_dir = os.path.join(root, "outputs", "research")
-    has_verdicts = os.path.isdir(verdict_dir) and any(
+    return os.path.isdir(verdict_dir) and any(
         name.startswith("verdict_") and name.endswith(".json")
         for name in os.listdir(verdict_dir)
     )
-    if has_verdicts:
-        cmds.append(
-            [sys.executable, os.path.join(_SCRIPTS_DIR, "build_dashboard.py")]
-        )
+
+
+def dashboard_commands(repo_root: str | None = None) -> list[list[str]]:
+    """Production dashboard always; research dashboard only when verdicts
+    exist (it hard-exits otherwise)."""
+    cmds = [production_dashboard_command()]
+    if has_verdicts(repo_root):
+        cmds.append(research_dashboard_command())
     else:
         _log("no verdict JSONs in outputs/research — research dashboard "
              "skipped (run 'recert' first).")
@@ -233,6 +245,21 @@ def build_steps(
         for cmd in dashboard_commands():
             name = os.path.splitext(os.path.basename(cmd[1]))[0]
             steps.append((f"dashboard:{name}", cmd))
+    if stage == "dashboard-production":
+        steps.append(
+            ("dashboard:build_production_dashboard",
+             production_dashboard_command())
+        )
+    if stage == "dashboard-research":
+        if not has_verdicts():
+            raise SystemExit(
+                "[pipeline] ERROR: no verdict JSONs in outputs/research — "
+                "the research dashboard needs them. Run "
+                "'pipeline.py recert' first."
+            )
+        steps.append(
+            ("dashboard:build_dashboard", research_dashboard_command())
+        )
     return steps
 
 
@@ -303,9 +330,12 @@ def main() -> None:
     )
     parser.add_argument(
         "stage",
-        choices=("quarterly", "recert", "production", "dashboards", "calendar"),
-        help="quarterly = recert -> production -> dashboards; calendar = "
-             "print the forward rebalance schedule per deployed strategy.",
+        choices=("quarterly", "update", "recert", "production", "dashboards",
+                 "dashboard-production", "dashboard-research", "calendar"),
+        help="quarterly = recert -> production -> dashboards; update = alias "
+             "for quarterly (full re-run of every deployed strategy); "
+             "dashboard-production / dashboard-research = build one "
+             "dashboard; calendar = forward rebalance schedule.",
     )
     parser.add_argument(
         "--strategy", default=None, metavar="ID",
@@ -350,13 +380,17 @@ def main() -> None:
                 f"[pipeline] ERROR: strategy '{args.strategy}' not in the "
                 "registry."
             )
-    if args.stage == "calendar":
+    stage = "quarterly" if args.stage == "update" else args.stage
+    if stage == "calendar":
         print_calendar(strategies, args.periods)
         return
-    if args.stage != "dashboards":
+    # The production dashboard renders from run artifacts alone; everything
+    # else (incl. the research dashboard, which re-runs engines per pane)
+    # needs the gitignored vendor data.
+    if stage != "dashboard-production":
         check_inputs()
     costs = None if args.no_costs else args.costs
-    steps = build_steps(args.stage, strategies, args.quick, costs,
+    steps = build_steps(stage, strategies, args.quick, costs,
                         strategy=args.strategy)
     run_steps(steps, args.dry_run)
 

@@ -173,8 +173,11 @@ The deployed-strategy registry [`configs/production.json`](configs/production.js
 
 ```bash
 python scripts/pipeline.py quarterly            # recert -> production -> dashboards
+python scripts/pipeline.py update               # alias: full re-run of every deployed strategy
 python scripts/pipeline.py quarterly --dry-run  # validate registry + data, print exact plan
 python scripts/pipeline.py quarterly --strategy EM_captilt_vsEM   # one strategy only
+python scripts/pipeline.py dashboard-production # production dashboard only (artifact-based)
+python scripts/pipeline.py dashboard-research   # research strategy dashboard only
 python scripts/pipeline.py calendar             # forward rebalance schedule (flags overdue dates)
 ```
 
