@@ -8,7 +8,12 @@ Deployed registry (`configs/production.json`), status as of 2026-06-10:
 | `DM_captilt_vsACWI` | DM Cap-Tilt vm @63d, active_share 0.30 | World (ACWI-equiv) | **Composition bet** — alpha = passive DM−ACWI spread (NW t 2.39); selection leg −0.10%/yr; never market as selection skill |
 
 ## When to run
-Each calendar quarter, after `Inputs/` is refreshed with the new quarter of vendor data. On unchanged data every artifact is bit-for-bit reproducible — re-running adds no information.
+On each rebalance date — `python scripts/pipeline.py calendar` prints the
+forward schedule (63-trading-day grid, both books; flags overdue dates;
+committed snapshot: docs/research/rebalance_calendar.md). Refresh `Inputs/`
+first. On unchanged data every artifact is bit-for-bit reproducible —
+re-running adds no information. `--strategy ID` restricts the cycle to one
+deployed book.
 
 ## The one command
 ```
@@ -45,6 +50,38 @@ mechanically (certified / power-limited / weak / negative).
 2. **MC gate** — `mc_p_value` failing (> 0.05) at re-cert ⇒ selection skill no longer distinguishable from random ⇒ de-risk.
 3. **Alpha front-loading** — second-half IC was ~0 at deployment for both books; if fresh quarters do not improve the trailing IC, the "decayed signal" hypothesis gains.
 4. **DM book only:** re-run the alpha decomposition (`python scripts/overfit_forensics.py --segment DM --bmk-index World`) — if the selection leg turns *significantly* negative, the overlay is paying for nothing.
+
+### Regime context for monitor 1 (RoRo, advisory — never a trading trigger)
+Read the rolling-IR signal **conditional on the RoRo regime**. RoRo data is
+NOT stored in this repo (stripped 2026-06-10 after the research concluded);
+pull fresh outputs from the external model repo (`C:\Proyectos\RoRo`,
+`regimes_jm.csv` = the persistent jump-model classifier; segment labels
+`EM_Eq` / `DM_Eq`; labels are causal/no-lookahead).
+Interpretation is PER BOOK — the 2010–2025 regime-conditioned attribution
+(2026-06-10 diagnostic) found opposite patterns:
+
+| Book | Active return by lagged JM state (matched segment) | Reading |
+|---|---|---|
+| EM_captilt_vsEM | Transitional +4.9%/yr (NW t 3.6) · Risk-on ~0 · Risk-off −1.3%/yr (t −0.7) | Alpha lives in Transitional; Risk-off weakness is normal, Risk-on/Transitional weakness is the alarming kind |
+| DM_captilt_vsACWI | Risk-off +0.9%/yr · Risk-on ~0 | Active ≈ DM−ACWI spread, which pays in stress; Risk-off weakness here IS alarming (the structural hedge failing) |
+
+Caveats: tercile "Risk-off" ≈ 35% of all days by construction (relative
+state, not a tail event); use the JM labels (persistence-enforced), lagged —
+never same-day; conditional cells carry multiplicity (36 examined) — treat
+as context, not significance. Replication (Test 4, 2026-06-10): the EM
+transitional concentration is **EM-specific** — World passed only
+directionally (t 0.39, null p 0.67), DM failed, HMM flips both; note the
+sibling books carry ~zero selection alpha to distribute, so the test had
+limited discriminating power. Do NOT extend the transitional-mix
+interpretation beyond the EM book. Full evidence trail: specs
+`spec_regime_overlay_tests_2026-06-10.md`,
+`spec_regime_quarterly_sampling_2026-06-10.md`,
+`spec_regime_replication_2026-06-10.md`; results in
+`docs/context/results.md` [R1]–[R5]. Verdict: RoRo is a gauge, never a
+signal — 4 pre-registered trials, 0 tradeable rules. This section is diagnostic only; any *trading*
+use of regimes requires its own pre-registered spec and a trial-ledger entry
+first. Diagnostic script: outputs/research/_regime_attribution.py (re-run
+after each Inputs/ + RoRo refresh).
 
 ## Do NOT
 - Lower thresholds to force a pass.

@@ -193,3 +193,64 @@ def test_main_stops_at_first_failure(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="FAILED at 'recert:EM_captilt_vsEM'"):
         _run_main(monkeypatch, tmp_path, ["quarterly"], recorder)
     assert len(recorder.calls) == 1  # nothing after the failure
+
+
+# ---------------------------------------------------------------------------
+# --strategy selector + rebalance calendar
+# ---------------------------------------------------------------------------
+
+def test_main_strategy_filter_recert(monkeypatch, tmp_path):
+    recorder = _Recorder()
+    _run_main(
+        monkeypatch, tmp_path,
+        ["recert", "--strategy", "DM_captilt_vsACWI"], recorder,
+    )
+    assert len(recorder.calls) == 1
+    joined = " ".join(recorder.calls[0])
+    assert "--segment DM" in joined and "--bmk-index World" in joined
+
+
+def test_main_strategy_filter_production_passthrough(monkeypatch, tmp_path):
+    recorder = _Recorder()
+    _run_main(
+        monkeypatch, tmp_path,
+        ["production", "--strategy", "EM_captilt_vsEM"], recorder,
+    )
+    assert len(recorder.calls) == 1
+    assert "--strategy" in recorder.calls[0]
+    assert "EM_captilt_vsEM" in recorder.calls[0]
+
+
+def test_main_strategy_filter_unknown(monkeypatch, tmp_path):
+    recorder = _Recorder()
+    with pytest.raises(SystemExit, match="not in the registry"):
+        _run_main(monkeypatch, tmp_path, ["recert", "--strategy", "nope"], recorder)
+
+
+def test_rebalance_schedule_matches_engine_convention():
+    """First step from 2025-11-14 must be 2026-02-11 — the value the engine
+    itself emitted in allocations_latest.json (anchors the convention)."""
+    dates = pipeline.rebalance_schedule("2025-11-14", 63, 3)
+    assert dates[0] == "2026-02-11"
+    assert len(dates) == 3
+    assert dates == sorted(dates)
+
+
+def test_calendar_prints_schedule(monkeypatch, tmp_path, capsys):
+    run_dir = tmp_path / "outputs" / "production" / "run_20251114"
+    for entry in (_EM_ENTRY, _DM_ENTRY):
+        d = run_dir / entry["id"]
+        d.mkdir(parents=True)
+        (d / "allocations_latest.json").write_text(
+            json.dumps({"rebalance_date": "2025-11-14"}), encoding="utf-8"
+        )
+    pipeline.print_calendar([_EM_ENTRY, _DM_ENTRY], periods=2,
+                            repo_root=str(tmp_path))
+    out = capsys.readouterr().out
+    assert "EM_captilt_vsEM" in out and "DM_captilt_vsACWI" in out
+    assert "2026-02-11" in out
+
+
+def test_calendar_no_run_dir(tmp_path):
+    with pytest.raises(SystemExit, match="no production run"):
+        pipeline.print_calendar([_EM_ENTRY], periods=2, repo_root=str(tmp_path))

@@ -174,6 +174,8 @@ The deployed-strategy registry [`configs/production.json`](configs/production.js
 ```bash
 python scripts/pipeline.py quarterly            # recert -> production -> dashboards
 python scripts/pipeline.py quarterly --dry-run  # validate registry + data, print exact plan
+python scripts/pipeline.py quarterly --strategy EM_captilt_vsEM   # one strategy only
+python scripts/pipeline.py calendar             # forward rebalance schedule (flags overdue dates)
 ```
 
 Stages are independently re-runnable (`recert` / `production` / `dashboards`). Allocations land in `outputs/production/run_{data_end}/{strategy_id}/allocations_latest.json` with the next rebalance date; every run carries the git commit and data-end stamp, and artifacts are **byte-deterministic** given the same inputs (verified by SHA-256 across consecutive full runs). Decision protocol and kill-switch monitors: [runbook](docs/research/RUNBOOK_quarterly_recert.md).
