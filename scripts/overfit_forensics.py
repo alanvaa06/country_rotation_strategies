@@ -136,15 +136,37 @@ def _log(msg: str) -> None:
 # Paths / labels
 # ---------------------------------------------------------------------------
 
-def out_suffix(segment: str, bmk_index: str | None) -> str:
-    """Output filename suffix: ``{seg}`` or ``{seg}_vs{NAME}``."""
-    return segment + (f"_vs{bmk_index}" if bmk_index else "")
+def out_suffix(segment: str, bmk_index: str | None,
+               prior_set: str = "vm", periodicity: int = 63) -> str:
+    """Output filename suffix: ``{seg}`` or ``{seg}_vs{NAME}``.
+
+    A ``_{prior_set}_p{periodicity}`` tail is appended ONLY for non-default
+    (non vm-@63) books, so the canonical vm-@63 report filenames are
+    unchanged and their committed markdown stays reproducible."""
+    s = segment + (f"_vs{bmk_index}" if bmk_index else "")
+    if prior_set != "vm" or periodicity != 63:
+        s += f"_{prior_set}_p{periodicity}"
+    return s
 
 
-def verdict_path(segment: str, bmk_index: str | None) -> str:
-    """Certified verdict JSON path (mirrors research_run.py tag logic)."""
-    tag = f"{segment}_prior_vm_p63_active_captilt"
+def verdict_path(segment: str, bmk_index: str | None,
+                 prior_set: str = "vm", periodicity: int = 63) -> str:
+    """Certified verdict JSON path (mirrors research_run.py tag logic).
+
+    research_run appends ``_vm`` only for the vm prior set (``full`` is the
+    no-suffix default); a costed (``--costs``) run adds a ``_tca`` suffix.
+    The gross ``stats`` block is identical costed-or-not (costs only add the
+    net/TCA blocks), so reconstruction parity holds against either — resolve
+    the plain file first (preserves the original default), then ``_tca``."""
+    tag = f"{segment}_prior"
+    if prior_set == "vm":
+        tag += "_vm"
+    tag += f"_p{periodicity}_active_captilt"
     tag += f"_vs{bmk_index}" if bmk_index else "_capbmk"
+    for suffix in ("", "_tca"):
+        cand = os.path.join(_OUT_DIR, f"verdict_{tag}{suffix}.json")
+        if os.path.exists(cand):
+            return cand
     return os.path.join(_OUT_DIR, f"verdict_{tag}.json")
 
 
@@ -245,12 +267,15 @@ def split_chunks(daily: pd.Series, k: int) -> list[pd.Series]:
 # Reconstruction
 # ---------------------------------------------------------------------------
 
-def reconstruct(segment: str, bmk_index: str | None):
+def reconstruct(segment: str, bmk_index: str | None,
+                prior_set: str = "vm", periodicity: int = 63):
     """Rebuild the certified Cap-Tilt book; mirrors research_run.py exactly.
 
     ``bmk_col = bmk_index or segment``; in both modes the benchmark column
     is the raw vendor index level from the Price input (``--bmk-source
     index`` / ``--bmk-index NAME`` branches of research_run.py).
+    ``prior_set`` / ``periodicity`` select the composite factor set and the
+    rebalance cadence (default vm @63 = the original certified candidate).
     """
     cfg = load_config(os.path.join(_REPO, "configs", "default.json"))
     processed, classification = rr.ingest(cfg)
@@ -273,7 +298,7 @@ def reconstruct(segment: str, bmk_index: str | None):
 
     factor_scores, _ = rr.build_factor_scores(processed, universe)
     normalized, _, _ = rr.build_composite(
-        factor_scores, tuple(rr.select_prior_factors(factor_scores, "vm"))
+        factor_scores, tuple(rr.select_prior_factors(factor_scores, prior_set))
     )
 
     # Cap-weight base, parity with research_run.py (positive-total rows only)
@@ -287,7 +312,7 @@ def reconstruct(segment: str, bmk_index: str | None):
         bmk=bmk_col,
         bmk_weight=0.0,
         mode="active",
-        periodicity=63,
+        periodicity=periodicity,
         selection_criteria="relative",
         weighting_method="Cap_Tilt",
         active_share=0.30,
@@ -470,6 +495,16 @@ def parse_args() -> argparse.Namespace:
              "index column (the original capbmk forensics).",
     )
     parser.add_argument(
+        "--prior-set", choices=("vm", "full"), default="vm", dest="prior_set",
+        help="Composite factor set: 'vm' (default, 50/50 Value+Momentum, the "
+             "original certified candidate) or 'full' (4-category blend).",
+    )
+    parser.add_argument(
+        "--periodicity", type=int, default=63,
+        help="Rebalance / IC cadence in trading days (default 63 = quarterly; "
+             "21 = monthly).",
+    )
+    parser.add_argument(
         "--render-only", action="store_true", default=False,
         help="Skip all computation; re-render the markdown report from the "
              "existing forensics JSON.",
@@ -482,10 +517,14 @@ def main() -> None:
     t0 = time.time()
     os.makedirs(_OUT_DIR, exist_ok=True)
 
-    suffix = out_suffix(args.segment, args.bmk_index)
+    suffix = out_suffix(
+        args.segment, args.bmk_index, args.prior_set, args.periodicity
+    )
     json_path = os.path.join(_OUT_DIR, f"overfit_forensics_{suffix}.json")
     md_path = os.path.join(_OUT_DIR, f"overfit_forensics_{suffix}.md")
-    vpath = verdict_path(args.segment, args.bmk_index)
+    vpath = verdict_path(
+        args.segment, args.bmk_index, args.prior_set, args.periodicity
+    )
 
     if args.render_only:
         with open(json_path, encoding="utf-8") as f:
@@ -503,7 +542,14 @@ def main() -> None:
         else f"{_FAMILY_N_SEGMENTS} segments compared vs their own cap index"
     )
 
-    _log(f"Reconstructing {args.segment} Cap-Tilt vm @63 (vs {blabel}) ...")
+    signal_label = (
+        "vm (50/50 Value+Momentum, 6 factors)" if args.prior_set == "vm"
+        else "full (4-category blend: Momentum/Valuation/Profitability/Quality)"
+    )
+    _log(
+        f"Reconstructing {args.segment} Cap-Tilt {args.prior_set} "
+        f"@{args.periodicity} (vs {blabel}) ..."
+    )
     (
         normalized,
         prices,
@@ -513,7 +559,9 @@ def main() -> None:
         base_weights,
         result,
         active_daily,
-    ) = reconstruct(args.segment, args.bmk_index)
+    ) = reconstruct(
+        args.segment, args.bmk_index, args.prior_set, args.periodicity
+    )
     equity = equity_curve(active_daily)
     n_days = int(len(active_daily))
     years = n_days / 252.0
@@ -788,9 +836,17 @@ def main() -> None:
     # 7. Parameter neighborhood (wider 1-D sweep)
     # ------------------------------------------------------------------
     _log("10/11 Parameter neighborhood sweep ...")
+    # Periodicity neighborhood centered on the book's cadence (±1/3) so the
+    # default config is always in the grid: @63 -> (42, 63, 84) exactly as
+    # before; @21 -> (14, 21, 28).
+    _pstep = round(args.periodicity / 3)
     nbhd_grid = {
         "relative_selection_score": (3, 4, 5, 6, 7),
-        "periodicity": (42, 63, 84),
+        "periodicity": (
+            args.periodicity - _pstep,
+            args.periodicity,
+            args.periodicity + _pstep,
+        ),
         "active_share": (0.2, 0.3, 0.4),
     }
     nbhd = parameter_sweep(
@@ -834,9 +890,9 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 8. IC time stability (relative IC @63, halves)
     # ------------------------------------------------------------------
-    _log("11/11 Composite relative IC @63: full vs halves ...")
+    _log(f"11/11 Composite relative IC @{args.periodicity}: full vs halves ...")
     ic_series = ic_module.information_coefficient(
-        normalized, prices, 63, "relative"
+        normalized, prices, args.periodicity, "relative"
     )["IC"].dropna()
     mid = len(ic_series) // 2
     ic_stability = {}
@@ -885,9 +941,10 @@ def main() -> None:
         {
             "strategy": {
                 "segment": args.segment,
-                "signal": "vm (50/50 Value+Momentum, 6 factors)",
+                "signal": signal_label,
+                "signal_short": args.prior_set,
                 "construction": "Cap_Tilt (active_share 0.30)",
-                "periodicity": 63,
+                "periodicity": args.periodicity,
                 "benchmark": blabel,
                 "bmk_index": args.bmk_index,
                 "basis": "active",
@@ -899,6 +956,10 @@ def main() -> None:
                     f"python scripts/overfit_forensics.py "
                     f"--segment {args.segment}"
                     + (f" --bmk-index {args.bmk_index}" if args.bmk_index else "")
+                    + (f" --prior-set {args.prior_set}"
+                       if args.prior_set != "vm" else "")
+                    + (f" --periodicity {args.periodicity}"
+                       if args.periodicity != 63 else "")
                 ),
                 "reconstruction_parity": parity,
             },
@@ -942,7 +1003,10 @@ def write_markdown(p: dict, md_path: str) -> None:  # noqa: C901 — sequential 
     family_n = st["family_n"]
 
     L: list[str] = []
-    L.append(f"# Overfitting Forensics — {seg} Cap-Tilt (vm @63d vs {bmk})")
+    L.append(
+        f"# Overfitting Forensics — {seg} Cap-Tilt "
+        f"({st.get('signal_short', 'vm')} @{st['periodicity']}d vs {bmk})"
+    )
     L.append("")
     L.append(
         f"**Question:** is the {seg} Cap-Tilt book's IR of "
@@ -1200,7 +1264,7 @@ def write_markdown(p: dict, md_path: str) -> None:  # noqa: C901 — sequential 
     for r in nb["rows"]:
         cfg_str = ", ".join(
             f"{k}={v}" for k, v in r["config"].items() if k != "<default>"
-        ) or "default (N=5, p=63, as=0.30)"
+        ) or f"default (N=5, p={st['periodicity']}, as=0.30)"
         L.append(
             f"| {cfg_str} | {r['sharpe_ann']:+.3f} | "
             f"{r['total_return']:+.2%} | {r['max_drawdown']:+.2%} |"
@@ -1218,7 +1282,10 @@ def write_markdown(p: dict, md_path: str) -> None:  # noqa: C901 — sequential 
     L.append("")
 
     # 10 — IC
-    L.append(f"## {10 + sec_off}. Composite relative IC @63d — time stability")
+    L.append(
+        f"## {10 + sec_off}. Composite relative IC @{st['periodicity']}d "
+        f"— time stability"
+    )
     L.append("")
     L.append("| Window | Dates | n | Mean IC | t-stat | Hit rate |")
     L.append("|---|---|---|---|---|---|")

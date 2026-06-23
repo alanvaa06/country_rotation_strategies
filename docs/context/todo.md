@@ -27,6 +27,18 @@
 - [done] 8 pre-registered runs World/DM/EM × screen/prior(/vm) → docs/research/segment_verdicts_2026-06-09.md
 - [done] Verdict: NO certification at pre-registered gates; DM 50/50 V+M nearest (t 1.96, MC p 0.059, DSR 0.91); EM clear negative; honest-negative documented
 
+## Phase 8 — Whole-family country rotation vs ACWI, all segments (2026-06-23)
+- [done] Pre-registration spec committed: docs/research/spec_monthly_world_vsACWI_2026-06-23.md (segments World/DM/EM, bmk ACWI, monthly @21 + @63 control, costed, 3 signals × 2 constructions, 36-cell grid, prediction monthly degrades + EM/World negative vs ACWI, 30 net-new ledger trials)
+- [done] Smoke wiring (--quick) green: World vm cap_tilt @21 — IR −0.30, turnover 2.09×, exit 0
+- [done] 36 full evidence runs: {World,DM,EM}×{vm,full,amp_ey}×{eqw,cap_tilt}×{@21,@63}, vs ACWI, costed — 0/36 certify, 0/36 net-positive
+- [done] Verify each verdict — 0 raw overall=true, cost-layer + turnover monotonicity 0/36 violations, DM vm cap_tilt @63 reproduces [D13] <1e-9
+- [done] Summarize: deliverable docs/research/grid_vsACWI_2026-06-23.md + grid_vsACWI_2026-06-23.csv; results.md [G1] / memory.md decision / session-log; ledger +30 → ~234. Monthly/ACWI closed as pre-registered negative.
+- [done] Build dashboard for selected monthly book (DM full cap_tilt @21 vs ACWI) — temp registry + isolated outputs/_dashboard_review/, production_dashboard 0.75MB/7figs; configs/production.json untouched
+- [done] Forensics on selected monthly book (overfit_forensics.py extended --prior-set/--periodicity, vm@63 byte-preserved; [G2]) — NOT overfit but composition bet + MC-null FAIL (p .148); recommend NOT registering as selection alpha
+- [done] DECISION: do NOT register DM full cap_tilt @21 — forensics + active_share rescue both negative.
+- [done] active_share rescue test (spec_active_share_rescue_2026-06-23.md, [G3]): REJECTED — selection IR worsens monotonically with active_share (−0.056→−0.162), IC does not convert; monthly full signal book abandoned.
+- [done] Cleanup: removed temp configs/_tmp_dm_full_captilt_p21.json (outputs/_dashboard_review/ kept, gitignored, viewable).
+
 ## Next (future sessions)
 - [blocked] Extend price/fundamental history pre-2010 — NO vendor access to earlier periods (confirmed 2026-06-09). Revisit only if MSCI/index proxies become available.
 - [done] Pre-registered robustness: DM prior-vm @21d monthly — monthly DEGRADES vs quarterly; ruled out (docs/research/segment_verdicts_2026-06-09.md Addendum §1)
@@ -46,6 +58,10 @@
 - [done] TCA stage 1 — Engine per-country cost_bps (vector trade pricing, flat-path byte parity) + configs/costs.json tiered cost model + backtest/tca.py (CostModel/load_cost_model, turnover_analysis, cost_decomposition layered IRs, breakeven_cost); 14 TDD tests, 201 green incl. parity
 - [done] TCA stage 2 — cost_bps threaded through protocols/scorecard/report; research_run.py --costs (net-of-cost re-runs EM/DM cap_tilt, `_tca` verdicts with cost_model/tca/stats_net blocks); production_run.py always costed (tca.json + turnover.csv + metrics net_of_fee); 'Transaction Costs & Turnover' sections in BOTH dashboards (3 new signal_viz figs + layer table + breakeven chip); 213 tests green
 - [pending] Consider deleting legacy root scripts (parity lock would need frozen fixtures first — see lessons)
+
+## Institutional research reports (2026-06-10)
+- [done] DM Cap-Tilt vs ACWI report — docs/research/institutional_report_DM_vsACWI_2026-06-10.md (artifact claims re-verified independently; new US-leg/short-EM + selection-leg-decay evidence; adversarial review; recommendation matrix)
+- [pending] EM Cap-Tilt vs EM-cap-index report (same template: verify, decompose, pushback)
 
 ## Production-Readiness Goal (2026-06-10)
 - [done] A1. Test suite green baseline — 213 passed, 0 failed (2026-06-10)
